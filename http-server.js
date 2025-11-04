@@ -9,6 +9,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import fs from 'fs';
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
@@ -1575,8 +1576,8 @@ app.post('/mcp', async (req, res) => {
         } else {
           console.log(`✅ Received ${images.length} image(s)`);
 
-          // Validate images first
-          let hasValidImage = false;
+          // Process images: convert file paths to base64 if needed
+          const processedImages = [];
           for (let i = 0; i < images.length; i++) {
             const img = images[i];
             
@@ -1584,8 +1585,27 @@ app.post('/mcp', async (req, res) => {
               continue;
             }
             
-            // Clean and validate base64 data
             let data = img.data || '';
+            
+            // Check if data is a file path (ChatGPT sometimes passes file paths)
+            if (data.startsWith('/') || data.startsWith('./') || data.includes('/mnt/data/')) {
+              console.log(`📁 Detected file path: ${data}, converting to base64...`);
+              try {
+                // Check if file exists
+                if (fs.existsSync(data)) {
+                  // Read file and convert to base64
+                  const fileBuffer = fs.readFileSync(data);
+                  data = fileBuffer.toString('base64');
+                  console.log(`✅ Successfully converted file to base64 (${fileBuffer.length} bytes)`);
+                } else {
+                  console.error(`❌ File not found: ${data}`);
+                  continue;
+                }
+              } catch (fileError) {
+                console.error(`❌ Error reading file ${data}:`, fileError.message);
+                continue;
+              }
+            }
             
             // Remove data URI prefix if present
             if (data.startsWith('data:image/')) {
@@ -1597,6 +1617,7 @@ app.post('/mcp', async (req, res) => {
             
             // Check if it looks like base64 data (at least 100 chars)
             if (data.length < 100) {
+              console.warn(`⚠️ Image ${i + 1} data too short (${data.length} chars), skipping`);
               continue;
             }
             
@@ -1605,29 +1626,39 @@ app.post('/mcp', async (req, res) => {
               const decoded = Buffer.from(data, 'base64');
               
               if (decoded.length === 0) {
+                console.warn(`⚠️ Image ${i + 1} decoded to empty buffer, skipping`);
                 continue;
               }
 
               // Check file size (Gemini has limits, roughly 20MB per image)
               if (decoded.length > 20 * 1024 * 1024) {
+                console.warn(`⚠️ Image ${i + 1} too large (${decoded.length} bytes), skipping`);
                 continue;
               }
 
-              hasValidImage = true;
+              // Add processed image
+              processedImages.push({
+                data: data,
+                mimeType: img.mimeType
+              });
             } catch (e) {
+              console.error(`❌ Image ${i + 1} invalid base64:`, e.message);
               continue;
             }
           }
           
-          if (!hasValidImage) {
+          // Validate that we have at least one valid image
+          if (processedImages.length === 0) {
             result = {
-              error: 'No valid images provided. Please ensure images are in base64 format with proper mimeType (image/png, image/jpeg, etc).'
+              error: 'No valid images provided. Please ensure images are in base64 format or accessible file paths with proper mimeType (image/png, image/jpeg, etc).'
             };
           } else {
+            console.log(`✅ Processed ${processedImages.length} valid image(s) out of ${images.length} provided`);
+            
             try {
               // Extract flight details from images using Gemini
               console.log('🔍 About to call extractFlightDetailsFromImages...');
-              const extractedData = await extractFlightDetailsFromImages(images);
+              const extractedData = await extractFlightDetailsFromImages(processedImages);
               console.log('✅ extractFlightDetailsFromImages completed successfully!');
               
               if (extractedData.error) {
