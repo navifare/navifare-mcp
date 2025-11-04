@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image to Base64 Converter for MCP Testing</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+        }
+        .copy-btn {
+            background-color: #28a745;
+            font-size: 12px;
+            padding: 5px 10px;
+        }
+        .copy-btn:hover {
+            background-color: #1e7e34;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖼️ Image to Base64 Converter</h1>
+        <p>Convert flight booking screenshots to base64 for testing the <code>extract_flight_from_image</code> MCP tool.</p>
+        
+        <div class="upload-area" id="uploadArea">
+            <p>📁 Click here or drag & drop images to convert to base64</p>
+            <p><small>Supports: JPG, PNG, GIF, WebP</small></p>
+            <input type="file" id="fileInput" accept="image/*" multiple>
+        </div>
+
+        <div id="imagePreview" style="margin: 20px 0;"></div>
+
+        <div class="result" id="result" style="display: none;">
+            <h3>Base64 Result:</h3>
+            <textarea id="base64Output" readonly placeholder="Base64 output will appear here..."></textarea>
+            <button class="copy-btn" onclick="copyToClipboard()">📋 Copy Base64</button>
+            <button class="copy-btn" onclick="generateMCPTestData()">🧪 Generate MCP Test Data</button>
+        </div>
+
+        <div id="mcpTestData" style="display: none; margin-top: 20px;">
+            <h3>MCP Test Data:</h3>
+            <textarea id="mcpOutput" readonly placeholder="MCP test data will appear here..."></textarea>
+            <button class="copy-btn" onclick="copyMCPData()">📋 Copy MCP Data</button>
+        </div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const result = document.getElementById('result');
+        const base64Output = document.getElementById('base64Output');
+        const mcpTestData = document.getElementById('mcpTestData');
+        const mcpOutput = document.getElementById('mcpOutput');
+
+        // Handle file input
+        fileInput.addEventListener('change', handleFiles);
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        // Handle drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            handleFiles({ target: { files } });
+        });
+
+        function handleFiles(event) {
+            const files = event.target.files;
+            if (files.length === 0) return;
+
+            imagePreview.innerHTML = '';
+            result.style.display = 'none';
+            mcpTestData.style.display = 'none';
+
+            Array.from(files).forEach((file, index) => {
+                if (file.type.startsWith('image/')) {
+                    convertToBase64(file, index);
+                    showImagePreview(file, index);
+                }
+            });
+        }
+
+        function showImagePreview(file, index) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = document.createElement('img');
+                img.src = e.target.result;
+                img.style.maxWidth = '200px';
+                img.style.maxHeight = '200px';
+                img.style.margin = '10px';
+                img.style.border = '1px solid #ccc';
+                img.style.borderRadius = '4px';
+                
+                const div = document.createElement('div');
+                div.innerHTML = `<strong>Image ${index + 1}:</strong> ${file.name}<br>`;
+                div.appendChild(img);
+                imagePreview.appendChild(div);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function convertToBase64(file, index) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64 = e.target.result.split(',')[1]; // Remove data:image/... prefix
+                
+                if (index === 0) {
+                    base64Output.value = base64;
+                } else {
+                    base64Output.value += '\n\n--- Next Image ---\n\n' + base64;
+                }
+                
+                result.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function copyToClipboard() {
+            base64Output.select();
+            document.execCommand('copy');
+            alert('Base64 copied to clipboard!');
+        }
+
+        function generateMCPTestData() {
+            const base64Data = base64Output.value;
+            const images = base64Data.split('\n\n--- Next Image ---\n\n').map((data, index) => ({
+                data: data.trim(),
+                mimeType: 'image/jpeg' // Default to JPEG, you can change this
+            }));
+
+            const mcpTestData = {
+                method: "tools/call",
+                params: {
+                    name: "extract_flight_from_image",
+                    arguments: {
+                        images: images
+                    }
+                }
+            };
+
+            mcpOutput.value = JSON.stringify(mcpTestData, null, 2);
+            mcpTestData.style.display = 'block';
+        }
+
+        function copyMCPData() {
+            mcpOutput.select();
+            document.execCommand('copy');
+            alert('MCP test data copied to clipboard!');
+        }
+    </script>
+</body>
+</html>

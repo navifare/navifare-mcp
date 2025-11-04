@@ -4,14 +4,46 @@ import fetch from "node-fetch";
 const API_BASE_URL = process.env.NAVIFARE_API_BASE_URL || "https://api.navifare.com/api/v1/price-discovery/flights";
 
 export async function submit_session(input: any) {
+  console.error('📤 Sending request to Navifare API:', JSON.stringify(input, null, 2));
+  console.error('📤 API URL:', `${API_BASE_URL}/session`);
   const res = await fetch(`${API_BASE_URL}/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
   });
+  console.error(`📥 Response status: ${res.status} ${res.statusText}`);
+  console.error(`📥 Response headers:`, Object.fromEntries(res.headers.entries()));
+  
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Navifare API error: ${res.status} ${res.statusText} - ${text}`);
+    let errorText = '';
+    let errorJson = null;
+    try {
+      errorText = await res.text();
+      console.error(`📥 Raw error response body length: ${errorText.length} characters`);
+      console.error(`📥 Raw error response body:`, errorText || '(empty)');
+      
+      // Try to parse as JSON for better error messages
+      if (errorText && errorText.trim()) {
+        try {
+          errorJson = JSON.parse(errorText);
+          console.error(`❌ Navifare API error response (${res.status}) [JSON]:`, JSON.stringify(errorJson, null, 2));
+          errorText = JSON.stringify(errorJson, null, 2);
+        } catch {
+          // Not JSON, use as-is
+          console.error(`❌ Navifare API error response (${res.status}) [Text]:`, errorText);
+        }
+      } else {
+        console.error(`❌ Navifare API error response (${res.status}): (empty response body)`);
+        errorText = '(empty response body)';
+      }
+    } catch (error) {
+      console.error(`❌ Failed to read error response body:`, error);
+      errorText = `Unable to read error response: ${error}`;
+    }
+    
+    const errorMessage = `Navifare API error: ${res.status} ${res.statusText}${errorText ? ` - ${errorText}` : ' (no error details)'}`;
+    console.error(`❌ Throwing error: ${errorMessage}`);
+    throw new Error(errorMessage);
   }
   return res.json();
 }
@@ -53,64 +85,126 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export async function submit_and_poll_session(input: any) {
+export async function submit_and_poll_session(input: any, onProgress?: (results: any) => void) {
+  // Use console.error so logs are visible in MCP Inspector (which reads stderr)
   console.error('🚀 Submitting session...');
   
-  // Submit the session
-  const submitResponse = await submit_session(input);
-  const request_id = submitResponse.request_id;
-  
-  if (!request_id) {
-    throw new Error('No request_id returned from submit_session');
-  }
-  
-  console.error(`✅ Session created with ID: ${request_id}`);
-  console.error('⏳ Initial poll for results...');
-  
-  // Poll for results - wait longer to get more comprehensive results
-  // The widget will auto-refresh to get more results as they come in
-  const maxAttempts = 10; // More attempts to get better results
-  const pollInterval = 6000; // 6 seconds between polls
-  
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    console.error(`  🔄 Poll attempt ${attempt}/${maxAttempts}...`);
+  try {
+    // Submit the session
+    const submitResponse = await submit_session(input);
+    const request_id = submitResponse.request_id;
     
-    await sleep(pollInterval);
+    if (!request_id) {
+      throw new Error('No request_id returned from submit_session');
+    }
     
-    try {
-      const results = await get_session_results(request_id);
+    console.error(`✅ Session created with ID: ${request_id}`);
+    console.error('⏳ Starting polling for results (will poll for up to 90 seconds)...');
+    
+    // Poll for results: 90 seconds total, checking every 10 seconds
+    const totalTimeout = 90000; // 90 seconds in milliseconds
+    const pollInterval = 10000; // 10 seconds between polls
+    
+    const startTime = Date.now();
+    let lastResults: any = null;
+    let attempt = 0;
+    let lastResultCount = 0;
+    
+    // Keep polling until COMPLETED or timeout
+    while (true) {
+      attempt++;
+      const elapsedTime = Date.now() - startTime;
       
-      // Return as soon as we have ANY results, or if completed
-      if (results.status === 'COMPLETED') {
-        const currentCount = results.totalResults || results.results?.length || 0;
-        console.error(`  ✅ Search completed with ${currentCount} result${currentCount !== 1 ? 's' : ''}.`);
-        return results;
+      // Check timeout BEFORE polling to avoid unnecessary API calls
+      if (elapsedTime >= totalTimeout) {
+        console.error(`  ⏱️  Reached 90-second timeout (${Math.round(elapsedTime / 1000)}s elapsed). Stopping polling.`);
+        break;
       }
       
-      // If we have results but status is still IN_PROGRESS, wait a bit longer for more
-      if (results.results && results.results.length > 0) {
-        const currentCount = results.totalResults || results.results?.length || 0;
-        // If we have results, the status should be considered successful regardless of what the API says
-        const effectiveStatus = results.status === 'COMPLETED' ? 'COMPLETED' : 'IN_PROGRESS';
-        console.error(`  ✅ Found ${currentCount} result${currentCount !== 1 ? 's' : ''} (status: ${effectiveStatus}). Continuing to poll for more...`);
+      console.error(`  🔄 Poll attempt ${attempt} (${Math.round(elapsedTime / 1000)}s elapsed, ${Math.round((totalTimeout - elapsedTime) / 1000)}s remaining)...`);
+      
+      try {
+        const results = await get_session_results(request_id);
+        lastResults = results;
         
-        // If this is our last attempt and we have results, return them
-        if (attempt === maxAttempts) {
-          console.error(`  ⏱️  Final attempt reached. Returning ${currentCount} result${currentCount !== 1 ? 's' : ''} (widget will auto-refresh for more).`);
+        const currentCount = results.totalResults || results.results?.length || 0;
+        console.error(`  📊 Poll ${attempt} response: status=${results.status}, totalResults=${currentCount}`);
+        
+        // Send progress update if we have new results OR if status changed to COMPLETED
+        const hasNewResults = currentCount > lastResultCount;
+        const isCompleted = results.status === 'COMPLETED';
+        
+        if ((hasNewResults || isCompleted) && onProgress && currentCount > 0) {
+          console.error(`  📤 Streaming ${currentCount} result${currentCount !== 1 ? 's' : ''}${hasNewResults ? ` (${currentCount - lastResultCount} new)` : ''}...`);
+          onProgress(results);
+          lastResultCount = currentCount;
+        }
+        
+        // Return immediately if status is COMPLETED
+        if (isCompleted) {
+          console.error(`  ✅ Search completed with ${currentCount} result${currentCount !== 1 ? 's' : ''}.`);
           return results;
         }
-      } else {
-        // Log progress but keep polling only if we have no results
-        console.error(`  ⏳ Status: ${results.status || 'IN_PROGRESS'} (no results yet)...`);
+        
+        // Log current status and continue polling if still IN_PROGRESS
+        if (currentCount > 0) {
+          console.error(`  ⏳ Status: ${results.status}, found ${currentCount} result${currentCount !== 1 ? 's' : ''}. Will continue polling...`);
+        } else {
+          console.error(`  ⏳ Status: ${results.status || 'IN_PROGRESS'} (no results yet). Will continue polling...`);
+        }
+        
+      } catch (error: any) {
+        console.error(`  ⚠️  Poll attempt ${attempt} failed: ${error.message}`);
+        console.error(`  ⚠️  Error stack: ${error.stack}`);
+        // Continue polling even if one attempt fails
       }
-    } catch (error) {
-      console.error(`  ⚠️  Poll attempt ${attempt} failed: ${error.message}`);
+      
+      // Check timeout again after the poll
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= totalTimeout) {
+        console.error(`  ⏱️  Reached 90-second timeout. Stopping polling.`);
+        break;
+      }
+      
+      // Calculate how long to wait (don't wait longer than remaining time)
+      const remainingTime = totalTimeout - elapsed;
+      const waitTime = Math.min(pollInterval, remainingTime);
+      
+      if (waitTime > 0) {
+        console.error(`  ⏸️  Waiting ${Math.round(waitTime / 1000)}s before next poll...`);
+        await sleep(waitTime);
+      } else {
+        console.error(`  ⏱️  No time remaining, stopping polling.`);
+        break;
+      }
     }
+    
+    // Return final results after polling completes or timeout reached
+    console.error(`⏱️  Polling complete after ${attempt} attempt(s). Returning final status...`);
+    if (lastResults) {
+      const finalCount = lastResults.totalResults || lastResults.results?.length || 0;
+      console.error(`  📤 Returning last known results: status=${lastResults.status}, totalResults=${finalCount}`);
+      // Send final progress update if we have results and haven't sent them yet
+      if (finalCount > lastResultCount && onProgress) {
+        onProgress(lastResults);
+      }
+      return lastResults;
+    }
+    // Fallback: get fresh results if we don't have any
+    console.error(`  📤 Fetching final results from API...`);
+    const finalResults = await get_session_results(request_id);
+    const finalCount = finalResults.totalResults || finalResults.results?.length || 0;
+    console.error(`  📤 Final results: status=${finalResults.status}, totalResults=${finalCount}`);
+    // Send final progress update if we have results
+    if (finalCount > 0 && onProgress) {
+      onProgress(finalResults);
+    }
+    return finalResults;
+  } catch (error: any) {
+    console.error(`❌ Fatal error in submit_and_poll_session: ${error.message}`);
+    console.error(`❌ Error stack: ${error.stack}`);
+    throw error;
   }
-  
-  // Return what we have (even if empty) - widget will auto-refresh
-  console.error('⏱️  Initial polling complete. Returning current status (widget will auto-refresh)...');
-  return await get_session_results(request_id);
 }
 
 

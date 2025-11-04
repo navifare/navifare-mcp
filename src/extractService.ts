@@ -38,7 +38,7 @@ Analyze this flight booking screenshot and extract comprehensive flight details.
   "outboundSegments": [
     {
       "airline": "AIRLINE_NAME",
-      "flightNumber": "NUMERIC_ONLY",
+      "flightNumber": "FULL_FLIGHT_NUMBER_WITH_PREFIX",
       "departure": "DEPARTURE_AIRPORT_CODE",
       "arrival": "ARRIVAL_AIRPORT_CODE", 
       "departureTime": "HH:MM",
@@ -68,18 +68,53 @@ Look very carefully for pricing information:
 IMPORTANT EXTRACTION RULES:
 1. Trip Type: **ALWAYS SET TO "round_trip"** - One-way trips are not supported. If you detect a one-way booking, still set tripType to "round_trip" but note this in the response.
 2. Cabin Class: Look for class indicators like "Economy", "Business", "Premium", "First"
-3. Passengers: Extract number of adults, children, infants (default to 1 adult if unclear)
-4. **SEGMENT CLASSIFICATION**: 
+3. Passengers: Extract number of adults, children, infants carefully:
+   - Look for explicit passenger count indicators: "2 adults", "2 passengers", "per person", "total for X people"
+   - If you see per-person price and total price (e.g., "$249/person, $497 total"), calculate passenger count: totalPrice ÷ perPersonPrice = passenger count
+   - Do NOT default to 1 adult if passenger count is clearly visible in the screenshot
+   - Only default to 1 adult if passenger count is truly unclear
+4. **SEGMENT CLASSIFICATION - CRITICAL: Extract ALL flights visible**:
+   - You MUST extract every flight segment you see in the screenshot, even if there are multiple flights
+   - Look for ALL flight information blocks, cards, or sections (e.g., "Flight to Athens", "Flight to London")
+   - Do NOT stop after extracting the first flight - continue until you've extracted all visible flights
+   - IGNORE text that says "One-way tickets" - this is just explaining pricing structure, NOT the trip type
+   
+   ROUND-TRIP CLASSIFICATION:
+   - If you see flights going from A → B AND B → A (returns to origin) → round_trip
+   - Example: LGW → ATH (first flight), ATH → LGW (second flight) = round_trip
+   - If the second flight's arrival airport matches the first flight's departure airport → it's a return flight
+   - Look for visual indicators: "Flight to [City]" and "Flight to [Origin City]", "Return", "Back", "Round trip"
+   - If you see two separate flights going in opposite directions → it's round_trip
+   
+   SEGMENT ASSIGNMENT:
    - For ROUND TRIPS: All flights from origin city to destination city go in "outboundSegments" (including connecting flights)
    - For ROUND TRIPS: All flights from destination city back to origin city go in "returnSegments" (including connecting flights)
    - For ONE-WAY TRIPS DETECTED: All flights go in "outboundSegments", "returnSegments" should be empty array, but set tripType to "round_trip" and add a note
    - **MULTI-SEGMENT FLIGHTS**: If there are connecting flights, each flight leg is a separate segment in the same direction
-5. Times: Use 24-hour format (HH:MM)
+   - **ROUND-TRIP DETECTION**: If the second segment's arrival airport matches the first segment's departure airport, it's a return flight (round-trip)
+   - Look for visual indicators: "Return", "Back", "Round trip", airport codes returning to origin
+   - If outbound segments end at destination and return segments start at destination, validate round-trip
+5. Times: Use 24-hour format (HH:MM). CRITICAL TIME EXTRACTION RULES:
+   - When you see times in 12-hour format with AM/PM indicators (e.g., "1:55 PM", "10:45 PM", "12:30 AM"), carefully identify the AM/PM indicator
+   - Convert 12-hour to 24-hour format correctly:
+     * AM times: Keep same (except 12:XX AM becomes 00:XX)
+     * PM times: Add 12 hours (except 12:XX PM stays 12:XX)
+     * Examples: 1:55 PM → 13:55, 10:45 PM → 22:45, 12:00 AM → 00:00, 12:00 PM → 12:00
+   - If you see a time with AM/PM indicator but extract it in 24-hour format, verify the conversion is correct
+   - If AM/PM indicator is unclear or missing, mark as lower confidence but still extract the time
 6. Airports: Use 3-letter IATA codes only
 7. **AIRLINE: Use the full airline name as it appears (e.g., "British Airways", "ITA Airways", "Lufthansa", "Air France")**
-8. **FLIGHT NUMBER: MUST extract ONLY the numeric part (e.g., "553" from "BA 553" or "BA553")**
+8. **FLIGHT NUMBER: MUST extract the COMPLETE flight number including airline prefix**
+   - Extract the full flight number as it appears: "DY816" → "DY816", "U2123" → "U2123", "BA553" → "BA553", "W46011" → "W46011"
+   - Include any letters or digits that appear before the numeric part (e.g., airline codes like DY, U2, BA, W4, FR, KM)
+   - Look for patterns like "BA 553" → "BA553", "DY 816" → "DY816", "U2 123" → "U2123"
+   - If you see multiple potential numbers, pick the one that includes the airline prefix when visible
+   - If flight number is not visible or unclear, set to null
 9. **FLIGHT DURATION: Extract flight duration in HH:MM format (e.g., "22:30" for 22 hours 30 minutes)**
 10. **CURRENCY: MUST extract three letters ISO currency code (EUR, USD, GBP, etc.) - look for symbols or text**
+    - If currency symbol "$" is visible → default to "USD"
+    - If currency symbol "€" is visible → default to "EUR"
+    - For other symbols, convert to ISO code (e.g., £ → GBP, ¥ → JPY)
 11. **PRICE: MUST extract numerical price value - remove currency symbols**
 
 **CRITICAL: DO NOT MAKE UP OR GUESS INFORMATION!**

@@ -24489,13 +24489,6 @@ var require_jsx_runtime = __commonJS({
 var import_react = __toESM(require_react());
 var import_client = __toESM(require_client());
 var import_jsx_runtime = __toESM(require_jsx_runtime());
-var SET_GLOBALS_EVENT_TYPE = "openai:set_globals";
-var SetGlobalsEvent = class extends CustomEvent {
-  constructor() {
-    super(...arguments);
-    this.type = SET_GLOBALS_EVENT_TYPE;
-  }
-};
 function useOpenAiGlobal(key) {
   return (0, import_react.useSyncExternalStore)(
     (onChange) => {
@@ -24505,10 +24498,10 @@ function useOpenAiGlobal(key) {
           onChange();
         }
       };
-      window.addEventListener(SET_GLOBALS_EVENT_TYPE, handleSetGlobal, { passive: true });
-      return () => window.removeEventListener(SET_GLOBALS_EVENT_TYPE, handleSetGlobal);
+      window.addEventListener("openai:set_globals", handleSetGlobal, { passive: true });
+      return () => window.removeEventListener("openai:set_globals", handleSetGlobal);
     },
-    () => window.openai[key]
+    () => window.openai?.[key]
   );
 }
 function useWidgetState(defaultState) {
@@ -24881,10 +24874,6 @@ if (rootElement) {
 } else {
   console.error("Could not find #flight-results-root element");
 }
-export {
-  SET_GLOBALS_EVENT_TYPE,
-  SetGlobalsEvent
-};
 /*! Bundled license information:
 
 react/cjs/react.development.js:
