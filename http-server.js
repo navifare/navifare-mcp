@@ -1135,13 +1135,13 @@ app.get('/mcp', (req, res) => {
       },
       {
         name: 'convert_image_to_base64',
-        description: 'Convert an image from various sources (URL, file path, or base64 with data URI prefix) to clean base64 format. Use this tool when you have an image URL, file path, or base64 string with data URI prefix and need clean base64 data for extract_flight_from_image. This tool downloads URLs, reads files, or cleans base64 strings and returns the clean base64-encoded image data.',
+        description: 'Convert an image from various sources (URL, file path, or base64 with data URI prefix) to clean base64 format. Use this tool when you have an image URL, file path accessible on the server, or base64 string with data URI prefix and need clean base64 data for extract_flight_from_image. IMPORTANT: If you\'re ChatGPT and have a file path like "/mnt/data/...", you MUST convert it to base64 on your side first (read the file and encode it) before calling this tool, as ChatGPT file paths are not accessible on remote servers. This tool downloads URLs, reads files accessible on the server, or cleans base64 strings and returns the clean base64-encoded image data.',
         inputSchema: {
           type: 'object',
           properties: {
             source: {
               type: 'string',
-              description: 'The image source. Can be: 1) A URL (http:// or https://) - image will be downloaded and converted; 2) A file path (starting with / or ./) - file will be read and converted; 3) A base64 string with data URI prefix (data:image/...) - prefix will be removed and clean base64 returned; 4) Already clean base64 - will be validated and returned as-is.'
+              description: 'The image source. Can be: 1) A URL (http:// or https://) - image will be downloaded and converted; 2) A file path accessible on the server (starting with / or ./) - file will be read and converted. NOTE: ChatGPT file paths like "/mnt/data/..." are NOT accessible - convert to base64 first; 3) A base64 string with data URI prefix (data:image/...) - prefix will be removed and clean base64 returned; 4) Already clean base64 - will be validated and returned as-is.'
             },
             mimeType: {
               type: 'string',
@@ -1470,13 +1470,13 @@ app.post('/mcp', async (req, res) => {
         },
         {
           name: 'convert_image_to_base64',
-          description: 'Convert an image from various sources (URL, file path, or base64 with data URI prefix) to clean base64 format. Use this tool when you have an image URL, file path, or base64 string with data URI prefix and need clean base64 data for extract_flight_from_image. This tool downloads URLs, reads files, or cleans base64 strings and returns the clean base64-encoded image data.',
+          description: 'Convert an image from various sources (URL, file path, or base64 with data URI prefix) to clean base64 format. Use this tool when you have an image URL, file path accessible on the server, or base64 string with data URI prefix and need clean base64 data for extract_flight_from_image. IMPORTANT: If you\'re ChatGPT and have a file path like "/mnt/data/...", you MUST convert it to base64 on your side first (read the file and encode it) before calling this tool, as ChatGPT file paths are not accessible on remote servers. This tool downloads URLs, reads files accessible on the server, or cleans base64 strings and returns the clean base64-encoded image data.',
           inputSchema: {
             type: 'object',
             properties: {
               source: {
                 type: 'string',
-                description: 'The image source. Can be: 1) A URL (http:// or https://) - image will be downloaded and converted; 2) A file path (starting with / or ./) - file will be read and converted; 3) A base64 string with data URI prefix (data:image/...) - prefix will be removed and clean base64 returned; 4) Already clean base64 - will be validated and returned as-is.'
+                description: 'The image source. Can be: 1) A URL (http:// or https://) - image will be downloaded and converted; 2) A file path accessible on the server (starting with / or ./) - file will be read and converted. NOTE: ChatGPT file paths like "/mnt/data/..." are NOT accessible - convert to base64 first; 3) A base64 string with data URI prefix (data:image/...) - prefix will be removed and clean base64 returned; 4) Already clean base64 - will be validated and returned as-is.'
               },
               mimeType: {
                 type: 'string',
@@ -1633,9 +1633,18 @@ app.post('/mcp', async (req, res) => {
             // Case 2: File path
             else if (source.startsWith('/') || source.startsWith('./')) {
               console.log(`📁 Reading file from path: ${source}`);
+              
+              // Special handling for ChatGPT's file paths (/mnt/data/...)
+              if (source.startsWith('/mnt/data/')) {
+                result = {
+                  error: `ChatGPT file paths (like "${source}") are not accessible on this server. You must convert the file to base64 on your side before calling this tool. Steps: 1) Read the file from /mnt/data/ using ChatGPT's file access capabilities, 2) Convert the file content to base64 encoding, 3) Call convert_image_to_base64 with the base64 string as the source (or call extract_flight_from_image directly with the base64). Alternatively, if you can upload the file to a URL, provide that URL instead.`
+                };
+                throw new Error('ChatGPT file path not accessible');
+              }
+              
               try {
                 if (!fs.existsSync(source)) {
-                  throw new Error(`File not found: ${source}`);
+                  throw new Error(`File not found: ${source}. File paths must be accessible on the server. If you're using ChatGPT, convert the file to base64 first and use that as the source instead.`);
                 }
                 const fileBuffer = fs.readFileSync(source);
                 base64Data = fileBuffer.toString('base64');
@@ -1653,7 +1662,7 @@ app.post('/mcp', async (req, res) => {
                 console.log(`✅ Read and converted file to base64 (${fileBuffer.length} bytes)`);
               } catch (fileError) {
                 result = {
-                  error: `Failed to read file: ${fileError.message}`
+                  error: `Failed to read file: ${fileError.message}. If you're using ChatGPT, file paths like "/mnt/data/..." are not accessible on remote servers. You must read the file on ChatGPT's side and convert it to base64 before calling this tool.`
                 };
                 throw fileError;
               }
