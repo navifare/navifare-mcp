@@ -1845,8 +1845,33 @@ process.stdin.on('data', async (data) => {
             
             const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
             
+            // Format message to display each offer on its own line
+            const resultCount = searchResult.totalResults || searchResult.results?.length || 0;
+            let formattedMessage = `Flight price search completed! Found ${resultCount} result(s):\n\n`;
+            
+            if (searchResult.results && searchResult.results.length > 0) {
+              searchResult.results.forEach((offer, index) => {
+                const rank = offer.rank || index + 1;
+                const price = offer.price || 'N/A';
+                const website = offer.website || 'Unknown';
+                const bookingUrl = offer.bookingUrl || '';
+                const fareType = offer.fareType || '';
+                
+                formattedMessage += `${rank}. ${website} - ${price}`;
+                if (fareType) {
+                  formattedMessage += ` (${fareType})`;
+                }
+                if (bookingUrl) {
+                  formattedMessage += `\n   🔗 ${bookingUrl}`;
+                }
+                formattedMessage += '\n\n';
+              });
+            } else {
+              formattedMessage += 'No results found.\n';
+            }
+            
             result = {
-              message: 'Flight search completed successfully!',
+              message: formattedMessage.trim(),
               searchResult: searchResult,
               searchData: searchData
             };
