@@ -20,10 +20,6 @@ import sharp from 'sharp';
 const app = express();
 const PORT = process.env.PORT || 2091;
 
-// Configure Express to handle file uploads
-app.use(express.json({ limit: '50mb' })); // Support JSON payloads up to 50MB
-app.use(express.urlencoded({ extended: true, limit: '50mb' })); // Support URL-encoded payloads
-
 // Initialize Gemini AI only when needed
 let genAI = null;
 function getGeminiAI() {
@@ -1110,7 +1106,7 @@ app.get('/mcp', (req, res) => {
       },
       {
         name: 'extract_flight_from_image',
-        description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. Images can be provided as: 1) Image URLs (http:// or https://) - will be downloaded automatically, 2) Base64-encoded strings - provide raw base64 without data URI prefix. Do NOT send file IDs or file paths.',
+        description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. ⚠️ CRITICAL: Images MUST be provided as base64-encoded strings. File IDs, file paths, or URLs will NOT work and will cause the tool to fail. You MUST convert images to base64 encoding before calling this tool.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1121,17 +1117,17 @@ app.get('/mcp', (req, res) => {
                 properties: {
                   data: {
                     type: 'string',
-                    description: 'Image data as either: 1) An image URL (http:// or https://) - the image will be downloaded automatically, 2) A base64-encoded string without data URI prefix (e.g., "iVBORw0KGgoAAAANSUhEUgAA..."). Do NOT send file IDs (like "file_000000009ca4720aaf20f16309d0c674") or file paths (like "/mnt/data/image.png") - these will fail. If you have a file, upload it to a URL or convert to base64 first.'
+                    description: '⚠️ CRITICAL REQUIREMENT: Image data MUST be a base64-encoded string. NO OTHER FORMAT WILL WORK. Do NOT send file IDs (like "file_000000009ca4720aaf20f16309d0c674"), file paths (like "/mnt/data/image.png"), or URLs. These will be rejected and the tool will fail. Format: Provide ONLY the raw base64 string without any data URI prefix. Example CORRECT: "iVBORw0KGgoAAAANSUhEUgAA..." (just the base64 characters). Example INCORRECT: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..." (has prefix - will fail). Example INCORRECT: "file_000000009ca4720aaf20f16309d0c674" (file ID - will fail). Example INCORRECT: "/mnt/data/image.png" (file path - will fail). If you have an image file, you MUST: 1) Read the file content, 2) Convert it to base64 encoding, 3) Provide ONLY the base64 string (no prefix, no file path, no file ID).'
                   },
                   mimeType: {
                     type: 'string',
-                    description: 'MIME type of the image. Required values: "image/png", "image/jpeg", "image/jpg", "image/webp", or "image/gif". Must match the actual image format. If providing a URL, this can be auto-detected from the URL, but it\'s recommended to specify it explicitly.'
+                    description: 'MIME type of the image. Required values: "image/png", "image/jpeg", "image/jpg", "image/webp", or "image/gif". Must match the actual image format.'
                   }
                 },
-                required: ['data']
+                required: ['data', 'mimeType']
               },
               minItems: 1,
-              description: 'Array of images to analyze for flight details. Each image can be provided as a URL or base64 string.'
+              description: 'Array of images to analyze for flight details. ⚠️ CRITICAL: Each image MUST have base64-encoded data. File paths or file IDs will NOT work and will be rejected.'
             }
           },
           required: ['images']
@@ -1139,11 +1135,11 @@ app.get('/mcp', (req, res) => {
       },
       {
         name: 'format_flight_pricecheck_request',
-        description: 'Parse flight details from natural language or extracted image data to format them for price comparison. Use this when the user mentions a specific flight they found and wants to check for better prices, or when extract_flight_from_image returns incomplete data. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details (from the extracted data or previous response) along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
+        description: 'Parse flight details from natural language text or transcribed image content to format them for price comparison. Use this when: 1) The user mentions a specific flight they found and wants to check for better prices, 2) The user uploads flight booking screenshots/images - YOU MUST first transcribe the image contents to text (read all text visible in the image including flight numbers, airlines, dates, times, airports, prices, etc.), then call this tool with the transcribed text. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
         inputSchema: {
           type: 'object',
           properties: {
-            user_request: { type: 'string', description: 'Describe the specific flight you found and want to check for better prices (e.g., "I found LX 1612 from MXP to FCO on Nov 4th at 6:40 PM for 150 EUR"). You can also paste extracted data from extract_flight_from_image here if it\'s incomplete. IMPORTANT: If providing missing data after a needsMoreInfo response, include the complete previous flight details (e.g., paste the full extracted JSON and add the missing fields) so Gemini has full context.' }
+            user_request: { type: 'string', description: 'Flight details in natural language text. If the user uploaded an image, YOU MUST first transcribe ALL visible text from the image (flight numbers, airlines, airports, dates, times, prices, passenger counts, etc.) into text format, then provide that transcribed text here. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." Include all details you can see in the image. IMPORTANT: If providing missing data after a needsMoreInfo response, include the complete previous flight details along with the missing fields so Gemini has full context.' }
           },
           required: ['user_request']
         }
@@ -1427,7 +1423,7 @@ app.post('/mcp', async (req, res) => {
         },
         {
           name: 'extract_flight_from_image',
-          description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. Images can be provided as: 1) Image URLs (http:// or https://) - will be downloaded automatically, 2) Base64-encoded strings - provide raw base64 without data URI prefix. Do NOT send file IDs or file paths.',
+          description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. ⚠️ CRITICAL: Images MUST be provided as base64-encoded strings. File IDs, file paths, or URLs will NOT work and will cause the tool to fail. You MUST convert images to base64 encoding before calling this tool.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -1438,17 +1434,17 @@ app.post('/mcp', async (req, res) => {
                   properties: {
                     data: {
                       type: 'string',
-                      description: 'Image data as either: 1) An image URL (http:// or https://) - the image will be downloaded automatically, 2) A base64-encoded string without data URI prefix (e.g., "iVBORw0KGgoAAAANSUhEUgAA..."). Do NOT send file IDs (like "file_000000009ca4720aaf20f16309d0c674") or file paths (like "/mnt/data/image.png") - these will fail. If you have a file, upload it to a URL or convert to base64 first.'
+                      description: '⚠️ CRITICAL REQUIREMENT: Image data MUST be a base64-encoded string. NO OTHER FORMAT WILL WORK. Do NOT send file IDs (like "file_000000009ca4720aaf20f16309d0c674"), file paths (like "/mnt/data/image.png"), or URLs. These will be rejected and the tool will fail. Format: Provide ONLY the raw base64 string without any data URI prefix. Example CORRECT: "iVBORw0KGgoAAAANSUhEUgAA..." (just the base64 characters). Example INCORRECT: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..." (has prefix - will fail). Example INCORRECT: "file_000000009ca4720aaf20f16309d0c674" (file ID - will fail). Example INCORRECT: "/mnt/data/image.png" (file path - will fail). If you have an image file, you MUST: 1) Read the file content, 2) Convert it to base64 encoding, 3) Provide ONLY the base64 string (no prefix, no file path, no file ID).'
                     },
                     mimeType: {
                       type: 'string',
-                      description: 'MIME type of the image. Required values: "image/png", "image/jpeg", "image/jpg", "image/webp", or "image/gif". Must match the actual image format. If providing a URL, this can be auto-detected from the URL, but it\'s recommended to specify it explicitly.'
+                      description: 'MIME type of the image. Required values: "image/png", "image/jpeg", "image/jpg", "image/webp", or "image/gif". Must match the actual image format.'
                     }
                   },
-                  required: ['data']
+                  required: ['data', 'mimeType']
                 },
                 minItems: 1,
-                description: 'Array of images to analyze for flight details. Each image can be provided as a URL or base64 string.'
+                description: 'Array of images to analyze for flight details. ⚠️ CRITICAL: Each image MUST have base64-encoded data. File paths or file IDs will NOT work and will be rejected.'
               }
             },
             required: ['images']
@@ -1456,11 +1452,11 @@ app.post('/mcp', async (req, res) => {
         },
         {
           name: 'format_flight_pricecheck_request',
-          description: 'Parse flight details from natural language or extracted image data to format them for price comparison. Use this when the user mentions a specific flight they found and wants to check for better prices, or when extract_flight_from_image returns incomplete data. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details (from the extracted data or previous response) along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
+          description: 'Parse flight details from natural language text or transcribed image content to format them for price comparison. Use this when: 1) The user mentions a specific flight they found and wants to check for better prices, 2) The user uploads flight booking screenshots/images - YOU MUST first transcribe the image contents to text (read all text visible in the image including flight numbers, airlines, dates, times, airports, prices, etc.), then call this tool with the transcribed text. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
           inputSchema: {
             type: 'object',
             properties: {
-              user_request: { type: 'string', description: 'Describe the specific flight you found and want to check for better prices (e.g., "I found LX 1612 from MXP to FCO on Nov 4th at 6:40 PM for 150 EUR"). You can also paste extracted data from extract_flight_from_image here if it\'s incomplete. IMPORTANT: If providing missing data after a needsMoreInfo response, include the complete previous flight details (e.g., paste the full extracted JSON and add the missing fields) so Gemini has full context.' }
+              user_request: { type: 'string', description: 'Flight details in natural language text. If the user uploaded an image, YOU MUST first transcribe ALL visible text from the image (flight numbers, airlines, airports, dates, times, prices, passenger counts, etc.) into text format, then provide that transcribed text here. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." Include all details you can see in the image. IMPORTANT: If providing missing data after a needsMoreInfo response, include the complete previous flight details along with the missing fields so Gemini has full context.' }
             },
             required: ['user_request']
           }
@@ -1580,59 +1576,25 @@ app.post('/mcp', async (req, res) => {
         } else {
           console.log(`✅ Received ${images.length} image(s)`);
 
-          // Process images: handle URLs, file paths, or base64
+          // Process images: convert file paths to base64 if needed
           const processedImages = [];
           for (let i = 0; i < images.length; i++) {
             const img = images[i];
             
-            if (!img.data) {
+            if (!img.data || !img.mimeType) {
               continue;
             }
             
             let data = img.data || '';
-            let mimeType = img.mimeType || null;
             
-            // Check if data is a URL (http:// or https://)
-            if (data.startsWith('http://') || data.startsWith('https://')) {
-              console.log(`🌐 Detected image URL: ${data}, downloading...`);
-              try {
-                const response = await fetch(data);
-                if (!response.ok) {
-                  throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                const buffer = await response.arrayBuffer();
-                const imageBuffer = Buffer.from(buffer);
-                data = imageBuffer.toString('base64');
-                
-                // Auto-detect mimeType from Content-Type header if not provided
-                if (!mimeType) {
-                  const contentType = response.headers.get('content-type');
-                  if (contentType && contentType.startsWith('image/')) {
-                    mimeType = contentType;
-                  } else {
-                    // Try to detect from URL extension (use original URL, not base64 data)
-                    const originalUrl = img.data.toLowerCase();
-                    if (originalUrl.includes('.png')) mimeType = 'image/png';
-                    else if (originalUrl.includes('.jpg') || originalUrl.includes('.jpeg')) mimeType = 'image/jpeg';
-                    else if (originalUrl.includes('.webp')) mimeType = 'image/webp';
-                    else if (originalUrl.includes('.gif')) mimeType = 'image/gif';
-                    else mimeType = 'image/png'; // Default fallback
-                  }
-                }
-                
-                console.log(`✅ Successfully downloaded and converted URL to base64 (${imageBuffer.length} bytes, mimeType: ${mimeType})`);
-              } catch (urlError) {
-                console.error(`❌ Error downloading image from URL ${data}:`, urlError.message);
-                continue;
-              }
+            // Check if data is a file ID (ChatGPT sometimes passes file IDs like "file_000000009ca4720aaf20f16309d0c674")
+            if (data.startsWith('file_') && data.length > 10) {
+              console.error(`❌ Detected file ID instead of base64: ${data}`);
+              continue; // Skip file IDs - ChatGPT needs to convert to base64 first
             }
-            // Check if data is a file ID (ChatGPT sometimes passes file IDs)
-            else if (data.startsWith('file_') && data.length > 10) {
-              console.error(`❌ Detected file ID: ${data}. File IDs are not supported. Please provide a URL or base64 string.`);
-              continue;
-            }
+            
             // Check if data is a file path (ChatGPT sometimes passes file paths)
-            else if (data.startsWith('/') || data.startsWith('./') || data.includes('/mnt/data/')) {
+            if (data.startsWith('/') || data.startsWith('./') || data.includes('/mnt/data/')) {
               console.log(`📁 Detected file path: ${data}, attempting to convert to base64...`);
               try {
                 // Check if file exists
@@ -1640,20 +1602,9 @@ app.post('/mcp', async (req, res) => {
                   // Read file and convert to base64
                   const fileBuffer = fs.readFileSync(data);
                   data = fileBuffer.toString('base64');
-                  
-                  // Auto-detect mimeType from file extension if not provided
-                  if (!mimeType) {
-                    const pathLower = img.data.toLowerCase(); // Use original path, not base64 data
-                    if (pathLower.endsWith('.png')) mimeType = 'image/png';
-                    else if (pathLower.endsWith('.jpg') || pathLower.endsWith('.jpeg')) mimeType = 'image/jpeg';
-                    else if (pathLower.endsWith('.webp')) mimeType = 'image/webp';
-                    else if (pathLower.endsWith('.gif')) mimeType = 'image/gif';
-                    else mimeType = 'image/png'; // Default fallback
-                  }
-                  
-                  console.log(`✅ Successfully converted file to base64 (${fileBuffer.length} bytes, mimeType: ${mimeType})`);
+                  console.log(`✅ Successfully converted file to base64 (${fileBuffer.length} bytes)`);
                 } else {
-                  console.error(`❌ File not found: ${data}. Please provide a URL or base64 string instead.`);
+                  console.error(`❌ File not found: ${data}. ChatGPT must convert images to base64 before sending.`);
                   continue;
                 }
               } catch (fileError) {
@@ -1662,7 +1613,6 @@ app.post('/mcp', async (req, res) => {
               }
             }
             
-            // At this point, data should be base64 (from URL download, file read, or original base64)
             // Remove data URI prefix if present
             if (data.startsWith('data:image/')) {
               data = data.split(',')[1] || data;
@@ -1670,11 +1620,6 @@ app.post('/mcp', async (req, res) => {
             
             // Remove ALL whitespace
             data = data.replace(/\s/g, '');
-            
-            // Ensure we have mimeType (default fallback)
-            if (!mimeType) {
-              mimeType = 'image/png'; // Default fallback
-            }
             
             // Check if it looks like base64 data (at least 100 chars)
             if (data.length < 100) {
@@ -1700,7 +1645,7 @@ app.post('/mcp', async (req, res) => {
               // Add processed image
               processedImages.push({
                 data: data,
-                mimeType: mimeType
+                mimeType: img.mimeType
               });
             } catch (e) {
               console.error(`❌ Image ${i + 1} invalid base64:`, e.message);
@@ -1713,16 +1658,13 @@ app.post('/mcp', async (req, res) => {
             const hasFileIds = images.some(img => img.data && img.data.startsWith('file_'));
             const hasFilePaths = images.some(img => img.data && (img.data.startsWith('/') || img.data.includes('/mnt/data/')));
             
-            const hasUrls = images.some(img => img.data && (img.data.startsWith('http://') || img.data.startsWith('https://')));
             let errorMessage = 'No valid images provided. ';
             if (hasFileIds) {
-              errorMessage += 'You provided file IDs (like "file_000000009ca4720aaf20f16309d0c674") which are not supported. Please provide image URLs (http:// or https://) or base64-encoded strings instead.';
+              errorMessage += 'You provided file IDs (like "file_000000009ca4720aaf20f16309d0c674") instead of base64 data. ChatGPT MUST convert images to base64 encoding before calling this tool. Read the image file, encode it as base64, and provide only the base64 string (without any data URI prefix).';
             } else if (hasFilePaths) {
-              errorMessage += 'You provided file paths, but the files are not accessible on the server. Please provide image URLs (http:// or https://) or base64-encoded strings instead.';
-            } else if (hasUrls) {
-              errorMessage += 'Failed to download images from the provided URLs. Please check that the URLs are accessible and point to valid image files.';
+              errorMessage += 'You provided file paths, but the files are not accessible on the server. ChatGPT MUST convert images to base64 encoding before calling this tool. Read the image file, encode it as base64, and provide only the base64 string (without any data URI prefix).';
             } else {
-              errorMessage += 'Please ensure images are provided as URLs (http:// or https://) or base64-encoded strings.';
+              errorMessage += 'Please ensure images are provided as base64-encoded strings (not file IDs or file paths) with proper mimeType (image/png, image/jpeg, etc).';
             }
             
             result = {
