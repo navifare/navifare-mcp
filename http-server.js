@@ -1292,31 +1292,35 @@ app.get('/mcp', (req, res) => {
     tools: [
       {
         name: 'flight_pricecheck',
-        description: 'Find a better price for a specific flight the user has already found. This tool searches multiple booking sources to compare prices and find cheaper alternatives for the exact same flight details. Use the format_flight_pricecheck_request tool to format the flight details if the input is a natural language text.',
+        title: 'Flight Price Check',
+        description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
         inputSchema: {
           type: 'object',
           properties: {
             trip: {
               type: 'object',
+              description: 'Flight trip details including segments, passengers, and travel class',
               properties: {
                 legs: {
                   type: 'array',
+                  description: 'Array of flight legs (one for outbound, one for return in round trips)',
                   items: {
                     type: 'object',
                     properties: {
                       segments: {
                         type: 'array',
+                        description: 'Array of flight segments within this leg',
                         items: {
                           type: 'object',
                           properties: {
-                            airline: { type: 'string', description: 'Two-letter airline code (e.g., LX)' },
-                            flightNumber: { type: 'string', description: 'Flight number (e.g., 1612)' },
-                            departureAirport: { type: 'string', description: 'Three-letter IATA code (e.g., ZRH)' },
-                            arrivalAirport: { type: 'string', description: 'Three-letter IATA code (e.g., LHR)' },
-                            departureDate: { type: 'string', description: 'Date in YYYY-MM-DD format' },
-                            departureTime: { type: 'string', description: 'Time in HH:MM or HH:MM:SS format' },
-                            arrivalTime: { type: 'string', description: 'Time in HH:MM or HH:MM:SS format' },
-                            plusDays: { type: 'number', description: 'Days to add to arrival date (0 for same day, 1 for next day)' }
+                            airline: { type: 'string', description: 'Two-letter IATA airline code (e.g., "LX", "AZ", "BA")' },
+                            flightNumber: { type: 'string', description: 'Numeric flight number without airline prefix (e.g., "1612", "573")' },
+                            departureAirport: { type: 'string', description: 'Three-letter IATA departure airport code (e.g., "ZRH", "MXP")' },
+                            arrivalAirport: { type: 'string', description: 'Three-letter IATA arrival airport code (e.g., "LHR", "FCO")' },
+                            departureDate: { type: 'string', description: 'Departure date in YYYY-MM-DD format (e.g., "2025-12-16")' },
+                            departureTime: { type: 'string', description: 'Departure time in HH:MM or HH:MM:SS format (e.g., "07:10" or "07:10:00")' },
+                            arrivalTime: { type: 'string', description: 'Arrival time in HH:MM or HH:MM:SS format (e.g., "08:25" or "08:25:00")' },
+                            plusDays: { type: 'number', description: 'Days to add to arrival date if arrival is next day (0 for same day, 1 for next day)' }
                           },
                           required: ['airline', 'flightNumber', 'departureAirport', 'arrivalAirport', 'departureDate', 'departureTime', 'arrivalTime', 'plusDays']
                         }
@@ -1325,20 +1329,51 @@ app.get('/mcp', (req, res) => {
                     required: ['segments']
                   }
                 },
-                travelClass: { type: 'string', description: 'e.g., ECONOMY, BUSINESS, FIRST' },
-                adults: { type: 'number' },
-                children: { type: 'number' },
-                infantsInSeat: { type: 'number' },
-                infantsOnLap: { type: 'number' }
+                travelClass: { type: 'string', description: 'Travel class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST', enum: ['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'] },
+                adults: { type: 'number', description: 'Number of adult passengers', minimum: 1 },
+                children: { type: 'number', description: 'Number of child passengers', minimum: 0 },
+                infantsInSeat: { type: 'number', description: 'Number of infants requiring a seat', minimum: 0 },
+                infantsOnLap: { type: 'number', description: 'Number of infants on lap', minimum: 0 }
               },
               required: ['legs', 'travelClass', 'adults', 'children', 'infantsInSeat', 'infantsOnLap']
             },
-            source: { type: 'string', description: 'Source of the price (e.g., "ChatGPT")' },
-            price: { type: 'string', description: 'Reference price' },
-            currency: { type: 'string', description: 'Three-letter currency code (e.g., USD, EUR)' },
-            location: { type: 'string', description: 'User location (optional)' }
+            source: { type: 'string', description: 'Source identifier for the original price (e.g., "ChatGPT", "User", "Booking.com")' },
+            price: { type: 'string', description: 'Reference price found by the user (e.g., "84.00", "200.50")' },
+            currency: { type: 'string', description: 'Three-letter ISO currency code (e.g., "EUR", "USD", "GBP")', pattern: '^[A-Z]{3}$' },
+            location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "VA", "IT", "US"). Defaults to "VA" if not provided.', pattern: '^[A-Z]{2}$', default: 'VA' }
           },
           required: ['trip', 'source', 'price', 'currency']
+        },
+        outputSchema: {
+          type: 'object',
+          description: 'Flight price comparison results',
+          properties: {
+            message: { type: 'string', description: 'Summary message about the search results' },
+            searchResult: {
+              type: 'object',
+              description: 'Detailed search results',
+              properties: {
+                request_id: { type: 'string', description: 'Unique identifier for this search request' },
+                status: { type: 'string', description: 'Search status: IN_PROGRESS, COMPLETED, or FAILED' },
+                totalResults: { type: 'number', description: 'Total number of price comparison results found' },
+                results: {
+                  type: 'array',
+                  description: 'Array of price comparison results',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      rank: { type: 'number', description: 'Ranking of this result' },
+                      price: { type: 'string', description: 'Price with currency (e.g., "84.00 EUR")' },
+                      website: { type: 'string', description: 'Booking website name' },
+                      bookingUrl: { type: 'string', description: 'URL to book this flight' },
+                      fareType: { type: 'string', description: 'Type of fare (Standard Fare or Special Fare)' }
+                    }
+                  }
+                }
+              }
+            },
+            status: { type: 'string', description: 'Overall status of the search' }
+          }
         }
       },
       // DEACTIVATED: Image extraction tool (commented out but kept for future use)
@@ -1375,13 +1410,42 @@ app.get('/mcp', (req, res) => {
       */
       {
         name: 'format_flight_pricecheck_request',
-        description: 'Parse flight details from natural language text or transcribed image content to format them for price comparison. Use this when: 1) The user mentions a specific flight they found and wants to check for better prices, 2) The user uploads flight booking screenshots/images - YOU MUST first transcribe the image contents to text (read all text visible in the image including flight numbers, airlines, dates, times, airports, prices, etc.), then call this tool with the transcribed text. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
+        title: 'Format Flight Request',
+        description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
         inputSchema: {
           type: 'object',
           properties: {
-            user_request: { type: 'string', description: 'Flight details in natural language text. If the user uploaded an image, YOU MUST first transcribe ALL visible text from the image (flight numbers, airlines, airports, dates, times, prices, passenger counts, etc.) into text format, then provide that transcribed text here. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." Include all details you can see in the image. IMPORTANT: If providing missing data after a needsMoreInfo response, include the complete previous flight details along with the missing fields so Gemini has full context.' }
+            user_request: { 
+              type: 'string', 
+              description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.' 
+            }
           },
           required: ['user_request']
+        },
+        outputSchema: {
+          type: 'object',
+          description: 'Formatted flight data or request for more information',
+          properties: {
+            message: { type: 'string', description: 'Status message or instructions' },
+            needsMoreInfo: { type: 'boolean', description: 'Whether additional information is required' },
+            missingFields: { 
+              type: 'array', 
+              description: 'List of missing required fields if needsMoreInfo is true',
+              items: { type: 'string' }
+            },
+            flightData: {
+              type: 'object',
+              description: 'Formatted flight data ready for flight_pricecheck (only present if needsMoreInfo is false)',
+              properties: {
+                trip: { type: 'object' },
+                source: { type: 'string' },
+                price: { type: 'string' },
+                currency: { type: 'string' },
+                location: { type: 'string' }
+              }
+            },
+            readyForPriceCheck: { type: 'boolean', description: 'Whether the data is ready to use with flight_pricecheck' }
+          }
         }
       }
     ]
@@ -1655,7 +1719,9 @@ app.post('/mcp', async (req, res) => {
         result: {
           protocolVersion: '2025-03-26',
           capabilities: {
-            tools: {},
+            tools: {
+              listChanged: false
+            },
             resources: {}
           },
           serverInfo: {
@@ -1680,31 +1746,35 @@ app.post('/mcp', async (req, res) => {
       const tools = [
         {
           name: 'flight_pricecheck',
-          description: 'Find a better price for a specific flight the user has already found. This tool searches multiple booking sources to compare prices and find cheaper alternatives for the exact same flight details. Use the format_flight_pricecheck_request tool to format the flight details if the input is a natural language text.',
+          title: 'Flight Price Check',
+          description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
           inputSchema: {
             type: 'object',
             properties: {
               trip: {
                 type: 'object',
+                description: 'Flight trip details including segments, passengers, and travel class',
                 properties: {
                   legs: {
                     type: 'array',
+                    description: 'Array of flight legs (one for outbound, one for return in round trips)',
                     items: {
                       type: 'object',
                       properties: {
                         segments: {
                           type: 'array',
+                          description: 'Array of flight segments within this leg',
                           items: {
                             type: 'object',
                             properties: {
-                              airline: { type: 'string', description: 'Two-letter airline code (e.g., LX)' },
-                              flightNumber: { type: 'string', description: 'Flight number (e.g., 1612)' },
-                              departureAirport: { type: 'string', description: 'Three-letter IATA code (e.g., ZRH)' },
-                              arrivalAirport: { type: 'string', description: 'Three-letter IATA code (e.g., LHR)' },
-                              departureDate: { type: 'string', description: 'Date in YYYY-MM-DD format' },
-                              departureTime: { type: 'string', description: 'Time in HH:MM or HH:MM:SS format' },
-                              arrivalTime: { type: 'string', description: 'Time in HH:MM or HH:MM:SS format' },
-                              plusDays: { type: 'number', description: 'Days to add to arrival date (0 for same day, 1 for next day)' }
+                              airline: { type: 'string', description: 'Two-letter IATA airline code (e.g., "LX", "AZ", "BA")' },
+                              flightNumber: { type: 'string', description: 'Numeric flight number without airline prefix (e.g., "1612", "573")' },
+                              departureAirport: { type: 'string', description: 'Three-letter IATA departure airport code (e.g., "ZRH", "MXP")' },
+                              arrivalAirport: { type: 'string', description: 'Three-letter IATA arrival airport code (e.g., "LHR", "FCO")' },
+                              departureDate: { type: 'string', description: 'Departure date in YYYY-MM-DD format (e.g., "2025-12-16")' },
+                              departureTime: { type: 'string', description: 'Departure time in HH:MM or HH:MM:SS format (e.g., "07:10" or "07:10:00")' },
+                              arrivalTime: { type: 'string', description: 'Arrival time in HH:MM or HH:MM:SS format (e.g., "08:25" or "08:25:00")' },
+                              plusDays: { type: 'number', description: 'Days to add to arrival date if arrival is next day (0 for same day, 1 for next day)' }
                             },
                             required: ['airline', 'flightNumber', 'departureAirport', 'arrivalAirport', 'departureDate', 'departureTime', 'arrivalTime', 'plusDays']
                           }
@@ -1713,20 +1783,51 @@ app.post('/mcp', async (req, res) => {
                       required: ['segments']
                     }
                   },
-                  travelClass: { type: 'string', description: 'e.g., ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST' },
-                  adults: { type: 'number' },
-                  children: { type: 'number' },
-                  infantsInSeat: { type: 'number' },
-                  infantsOnLap: { type: 'number' }
+                  travelClass: { type: 'string', description: 'Travel class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST', enum: ['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'] },
+                  adults: { type: 'number', description: 'Number of adult passengers', minimum: 1 },
+                  children: { type: 'number', description: 'Number of child passengers', minimum: 0 },
+                  infantsInSeat: { type: 'number', description: 'Number of infants requiring a seat', minimum: 0 },
+                  infantsOnLap: { type: 'number', description: 'Number of infants on lap', minimum: 0 }
                 },
                 required: ['legs', 'travelClass', 'adults', 'children', 'infantsInSeat', 'infantsOnLap']
               },
-              source: { type: 'string', description: 'Source of the price (e.g., "ChatGPT")' },
-              price: { type: 'string', description: 'Reference price' },
-              currency: { type: 'string', description: 'Three-letter currency code (e.g., USD, EUR)' },
-              location: { type: 'string', description: 'User location, two letters, e.g. IT. If unsure, use VA)' }
+              source: { type: 'string', description: 'Source identifier for the original price (e.g., "ChatGPT", "User", "Booking.com")' },
+              price: { type: 'string', description: 'Reference price found by the user (e.g., "84.00", "200.50")' },
+              currency: { type: 'string', description: 'Three-letter ISO currency code (e.g., "EUR", "USD", "GBP")', pattern: '^[A-Z]{3}$' },
+              location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "VA", "IT", "US"). Defaults to "VA" if not provided.', pattern: '^[A-Z]{2}$', default: 'VA' }
             },
-            required: ['trip', 'source', 'price', 'currency', 'location']
+            required: ['trip', 'source', 'price', 'currency']
+          },
+          outputSchema: {
+            type: 'object',
+            description: 'Flight price comparison results',
+            properties: {
+              message: { type: 'string', description: 'Summary message about the search results' },
+              searchResult: {
+                type: 'object',
+                description: 'Detailed search results',
+                properties: {
+                  request_id: { type: 'string', description: 'Unique identifier for this search request' },
+                  status: { type: 'string', description: 'Search status: IN_PROGRESS, COMPLETED, or FAILED' },
+                  totalResults: { type: 'number', description: 'Total number of price comparison results found' },
+                  results: {
+                    type: 'array',
+                    description: 'Array of price comparison results',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        rank: { type: 'number', description: 'Ranking of this result' },
+                        price: { type: 'string', description: 'Price with currency (e.g., "84.00 EUR")' },
+                        website: { type: 'string', description: 'Booking website name' },
+                        bookingUrl: { type: 'string', description: 'URL to book this flight' },
+                        fareType: { type: 'string', description: 'Type of fare (Standard Fare or Special Fare)' }
+                      }
+                    }
+                  }
+                }
+              },
+              status: { type: 'string', description: 'Overall status of the search' }
+            }
           }
         },
         // DEACTIVATED: Image extraction tool (commented out but kept for future use)
@@ -1763,13 +1864,42 @@ app.post('/mcp', async (req, res) => {
         */
         {
           name: 'format_flight_pricecheck_request',
-          description: 'Parse flight details from natural language text or transcribed image content to format them for price comparison. Use this when: 1) The user mentions a specific flight they found and wants to check for better prices, 2) The user uploads flight booking screenshots/images - YOU MUST first transcribe the image contents to text (read all text visible in the image including flight numbers, airlines, dates, times, airports, prices, etc.), then call this tool with the transcribed text. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
+          title: 'Format Flight Request',
+          description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
           inputSchema: {
             type: 'object',
             properties: {
-              user_request: { type: 'string', description: 'Flight details in natural language text. If the user uploaded an image, YOU MUST first transcribe ALL visible text from the image (flight numbers, airlines, airports, dates, times, prices, passenger counts, etc.) into text format, then provide that transcribed text here. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." Include all details you can see in the image. IMPORTANT: If providing missing data after a needsMoreInfo response, include the complete previous flight details along with the missing fields so Gemini has full context.' }
+              user_request: { 
+                type: 'string', 
+                description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.' 
+              }
             },
             required: ['user_request']
+          },
+          outputSchema: {
+            type: 'object',
+            description: 'Formatted flight data or request for more information',
+            properties: {
+              message: { type: 'string', description: 'Status message or instructions' },
+              needsMoreInfo: { type: 'boolean', description: 'Whether additional information is required' },
+              missingFields: { 
+                type: 'array', 
+                description: 'List of missing required fields if needsMoreInfo is true',
+                items: { type: 'string' }
+              },
+              flightData: {
+                type: 'object',
+                description: 'Formatted flight data ready for flight_pricecheck (only present if needsMoreInfo is false)',
+                properties: {
+                  trip: { type: 'object' },
+                  source: { type: 'string' },
+                  price: { type: 'string' },
+                  currency: { type: 'string' },
+                  location: { type: 'string' }
+                }
+              },
+              readyForPriceCheck: { type: 'boolean', description: 'Whether the data is ready to use with flight_pricecheck' }
+            }
           }
         }
       ];
