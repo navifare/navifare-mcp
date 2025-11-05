@@ -1436,67 +1436,71 @@ app.post('/mcp', async (req, res) => {
 
       // Extract 2-letter country code from location if needed
       if (typeof args.location === 'string' && args.location.trim()) {
-        const loc = args.location.trim();
+        const loc = args.location.trim().toLowerCase();
 
-        // Timezone to country mapping
-        const timezoneToCountry = {
-          'Europe/Rome': 'IT',
-          'Europe/Milan': 'IT',
-          'Europe/Paris': 'FR',
-          'Europe/London': 'GB',
-          'America/New_York': 'US',
-          'America/Los_Angeles': 'US',
-        };
-
-        // City/country name mapping (for common cases like "Milan, Italy")
-        const cityCountryMapping = {
-          'italy': 'IT', 'italia': 'IT',
-          'france': 'FR', 'francia': 'FR',
-          'united kingdom': 'GB', 'uk': 'GB', 'england': 'GB',
-          'united states': 'US', 'usa': 'US', 'america': 'US',
-          'spain': 'ES', 'espana': 'ES',
-          'germany': 'DE', 'deutschland': 'DE',
-          'switzerland': 'CH', 'svizzera': 'CH',
-        };
-
-        if (loc in timezoneToCountry) {
-          args.location = timezoneToCountry[loc];
-        } else if (loc.length === 2 && loc.match(/^[A-Z]{2}$/i)) {
-          // Already a 2-letter code
-          args.location = loc.toUpperCase();
+        // Hardcode Italy to VA (Vatican City code, as requested)
+        if (loc === 'italy' || loc === 'italia' || loc.includes('italy') || loc.includes('italia')) {
+          args.location = 'VA';
         } else {
-          // Handle cases like "EU-Rome" - extract the country part
-          const parts = loc.split('-');
-          if (parts.length === 2 && parts[1].length === 2 && parts[1].match(/^[A-Z]{2}$/i)) {
-            args.location = parts[1].toUpperCase();
+          // Timezone to country mapping
+          const timezoneToCountry = {
+            'europe/rome': 'IT',
+            'europe/milan': 'IT',
+            'europe/paris': 'FR',
+            'europe/london': 'GB',
+            'america/new_york': 'US',
+            'america/los_angeles': 'US',
+          };
+
+          // City/country name mapping (for common cases like "Milan, Italy")
+          const cityCountryMapping = {
+            'italy': 'VA', 'italia': 'VA', // Hardcoded to VA as requested
+            'france': 'FR', 'francia': 'FR',
+            'united kingdom': 'GB', 'uk': 'GB', 'england': 'GB',
+            'united states': 'US', 'usa': 'US', 'america': 'US',
+            'spain': 'ES', 'espana': 'ES',
+            'germany': 'DE', 'deutschland': 'DE',
+            'switzerland': 'CH', 'svizzera': 'CH',
+          };
+
+          if (loc in timezoneToCountry) {
+            args.location = timezoneToCountry[loc];
+          } else if (loc.length === 2 && loc.match(/^[A-Z]{2}$/i)) {
+            // Already a 2-letter code
+            args.location = loc.toUpperCase();
           } else {
-            // Try to find country name in the string (e.g., "Milan, Italy" -> "IT")
-            const lowerLoc = loc.toLowerCase();
-            let found = false;
-            for (const [country, code] of Object.entries(cityCountryMapping)) {
-              if (lowerLoc.includes(country)) {
-                args.location = code;
-                found = true;
-                break;
+            // Handle cases like "EU-Rome" - extract the country part
+            const parts = loc.split('-');
+            if (parts.length === 2 && parts[1].length === 2 && parts[1].match(/^[A-Z]{2}$/i)) {
+              args.location = parts[1].toUpperCase();
+            } else {
+              // Try to find country name in the string (e.g., "Milan, Italy" -> "VA")
+              let found = false;
+              for (const [country, code] of Object.entries(cityCountryMapping)) {
+                if (loc.includes(country)) {
+                  args.location = code;
+                  found = true;
+                  break;
+                }
               }
-            }
-            // Try to extract explicit 2-letter code (e.g., "Rome, IT")
-            if (!found) {
-              const match = loc.match(/\b([A-Z]{2})\b/);
-              if (match && match[1] !== 'EU') { // Avoid matching "EU" as a country code
-                args.location = match[1];
-                found = true;
+              // Try to extract explicit 2-letter code (e.g., "Rome, IT")
+              if (!found) {
+                const match = loc.match(/\b([A-Z]{2})\b/i);
+                if (match && match[1].toUpperCase() !== 'EU') { // Avoid matching "EU" as a country code
+                  args.location = match[1].toUpperCase();
+                  found = true;
+                }
               }
-            }
-            // If we still can't parse it, remove the field entirely
-            if (!found) {
-              delete args.location;
+              // If we still can't parse it, default to VA for Italy-related locations
+              if (!found) {
+                args.location = 'VA'; // Default to VA as requested
+              }
             }
           }
         }
       } else {
-        // If no location provided, remove the field entirely (backend doesn't accept empty string)
-        delete args.location;
+        // If no location provided, default to VA (as requested)
+        args.location = 'VA';
       }
 
       // Ensure source is valid (backend only accepts specific values)
@@ -1520,11 +1524,38 @@ app.post('/mcp', async (req, res) => {
       for (const leg of args.trip.legs) {
         if (!leg.segments) continue;
         for (const seg of leg.segments) {
-          if (typeof seg.flightNumber === 'string') {
-            // Keep numeric-only per existing web extract rules
-            const match = seg.flightNumber.match(/\d+/);
-            if (match) seg.flightNumber = match[0];
+          // Extract airline code from flight number if needed
+          if (typeof seg.flightNumber === 'string' && seg.flightNumber) {
+            // Check if flight number contains airline prefix (e.g., "XZ2020")
+            const airlineFromFlight = extractAirlineCodeFromFlightNumber(seg.flightNumber);
+            
+            if (airlineFromFlight) {
+              // If airline is not a 2-letter code, use the one from flight number
+              if (!seg.airline || seg.airline.length !== 2 || !/^[A-Z]{2}$/i.test(seg.airline)) {
+                seg.airline = airlineFromFlight.toUpperCase();
+              }
+              
+              // Clean flight number by removing airline prefix
+              seg.flightNumber = cleanFlightNumber(seg.flightNumber);
+            } else {
+              // Extract numeric part only if no airline prefix found
+              const match = seg.flightNumber.match(/\d+/);
+              if (match) seg.flightNumber = match[0];
+            }
           }
+          
+          // Enforce airline codes to be exactly 2 letters (take first 2 if longer)
+          if (typeof seg.airline === 'string' && seg.airline) {
+            const normalized = seg.airline.toUpperCase().trim();
+            if (normalized.length >= 2) {
+              // Take first 2 characters if longer, or pad if shorter
+              seg.airline = normalized.substring(0, 2);
+            } else if (normalized.length === 1) {
+              // If only 1 character, keep as is (rare case)
+              seg.airline = normalized;
+            }
+          }
+          
           // Ensure plusDays present
           if (!Number.isFinite(seg.plusDays)) seg.plusDays = 0;
           
