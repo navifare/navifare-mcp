@@ -1341,6 +1341,8 @@ app.get('/mcp', (req, res) => {
           required: ['trip', 'source', 'price', 'currency']
         }
       },
+      // DEACTIVATED: Image extraction tool (commented out but kept for future use)
+      /*
       {
         name: 'extract_flight_from_image',
         description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. ⚠️ CRITICAL: Images MUST be provided as base64-encoded strings. File IDs, file paths, or URLs will NOT work and will cause the tool to fail. You MUST convert images to base64 encoding before calling this tool.',
@@ -1370,6 +1372,7 @@ app.get('/mcp', (req, res) => {
           required: ['images']
         }
       },
+      */
       {
         name: 'format_flight_pricecheck_request',
         description: 'Parse flight details from natural language text or transcribed image content to format them for price comparison. Use this when: 1) The user mentions a specific flight they found and wants to check for better prices, 2) The user uploads flight booking screenshots/images - YOU MUST first transcribe the image contents to text (read all text visible in the image including flight numbers, airlines, dates, times, airports, prices, etc.), then call this tool with the transcribed text. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
@@ -1695,6 +1698,8 @@ app.post('/mcp', async (req, res) => {
             required: ['trip', 'source', 'price', 'currency']
           }
         },
+        // DEACTIVATED: Image extraction tool (commented out but kept for future use)
+        /*
         {
           name: 'extract_flight_from_image',
           description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. ⚠️ CRITICAL: Images MUST be provided as base64-encoded strings. File IDs, file paths, or URLs will NOT work and will cause the tool to fail. You MUST convert images to base64 encoding before calling this tool.',
@@ -1724,6 +1729,7 @@ app.post('/mcp', async (req, res) => {
             required: ['images']
           }
         },
+        */
         {
           name: 'format_flight_pricecheck_request',
           description: 'Parse flight details from natural language text or transcribed image content to format them for price comparison. Use this when: 1) The user mentions a specific flight they found and wants to check for better prices, 2) The user uploads flight booking screenshots/images - YOU MUST first transcribe the image contents to text (read all text visible in the image including flight numbers, airlines, dates, times, airports, prices, etc.), then call this tool with the transcribed text. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
@@ -1818,6 +1824,8 @@ app.post('/mcp', async (req, res) => {
       
       let result;
       
+      // DEACTIVATED: Image extraction tool handler (commented out but kept for future use)
+      /*
       if (name === 'extract_flight_from_image') {
         console.log('📷 extract_flight_from_image tool called!');
 
@@ -2007,7 +2015,9 @@ app.post('/mcp', async (req, res) => {
             }
           }
         }
-      } else if (name === 'format_flight_pricecheck_request') {
+      } else
+      */
+      if (name === 'format_flight_pricecheck_request') {
         console.log('🚀 Starting format_flight_pricecheck_request...');
         
         // Validate that we have user_request
