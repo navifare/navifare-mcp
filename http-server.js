@@ -1498,72 +1498,18 @@ app.post('/mcp', async (req, res) => {
         args.currency = args.currency.trim().toUpperCase();
       }
 
-      // Extract 2-letter country code from location if needed
+      // Location handling: default to VA unless a valid 2-letter country code is provided
       if (typeof args.location === 'string' && args.location.trim()) {
-        const loc = args.location.trim().toLowerCase();
-
-        // Hardcode Italy to VA (Vatican City code, as requested)
-        if (loc === 'italy' || loc === 'italia' || loc.includes('italy') || loc.includes('italia')) {
-          args.location = 'VA';
+        const loc = args.location.trim().toUpperCase();
+        // Check if it's a valid 2-letter ISO country code
+        if (loc.length === 2 && /^[A-Z]{2}$/.test(loc)) {
+          args.location = loc;
         } else {
-          // Timezone to country mapping
-          const timezoneToCountry = {
-            'europe/rome': 'IT',
-            'europe/milan': 'IT',
-            'europe/paris': 'FR',
-            'europe/london': 'GB',
-            'america/new_york': 'US',
-            'america/los_angeles': 'US',
-          };
-
-          // City/country name mapping (for common cases like "Milan, Italy")
-          const cityCountryMapping = {
-            'italy': 'VA', 'italia': 'VA', // Hardcoded to VA as requested
-            'france': 'FR', 'francia': 'FR',
-            'united kingdom': 'GB', 'uk': 'GB', 'england': 'GB',
-            'united states': 'US', 'usa': 'US', 'america': 'US',
-            'spain': 'ES', 'espana': 'ES',
-            'germany': 'DE', 'deutschland': 'DE',
-            'switzerland': 'CH', 'svizzera': 'CH',
-          };
-
-          if (loc in timezoneToCountry) {
-            args.location = timezoneToCountry[loc];
-          } else if (loc.length === 2 && loc.match(/^[A-Z]{2}$/i)) {
-            // Already a 2-letter code
-            args.location = loc.toUpperCase();
-          } else {
-            // Handle cases like "EU-Rome" - extract the country part
-            const parts = loc.split('-');
-            if (parts.length === 2 && parts[1].length === 2 && parts[1].match(/^[A-Z]{2}$/i)) {
-              args.location = parts[1].toUpperCase();
-            } else {
-              // Try to find country name in the string (e.g., "Milan, Italy" -> "VA")
-              let found = false;
-              for (const [country, code] of Object.entries(cityCountryMapping)) {
-                if (loc.includes(country)) {
-                  args.location = code;
-                  found = true;
-                  break;
-                }
-              }
-              // Try to extract explicit 2-letter code (e.g., "Rome, IT")
-              if (!found) {
-                const match = loc.match(/\b([A-Z]{2})\b/i);
-                if (match && match[1].toUpperCase() !== 'EU') { // Avoid matching "EU" as a country code
-                  args.location = match[1].toUpperCase();
-                  found = true;
-                }
-              }
-              // If we still can't parse it, default to VA for Italy-related locations
-              if (!found) {
-                args.location = 'VA'; // Default to VA as requested
-              }
-            }
-          }
+          // Not a valid 2-letter code, default to VA
+          args.location = 'VA';
         }
       } else {
-        // If no location provided, default to VA (as requested)
+        // No location provided, default to VA
         args.location = 'VA';
       }
 
