@@ -363,9 +363,79 @@ function sanitizeSubmitArgs(rawArgs) {
   return args;
 }
 
+// Helper function to split round trip segments in legs format (same logic as geminiService.ts)
+// Reuses the round trip detection pattern from the web app
+function splitRoundTripLegs(legs) {
+  if (!legs || legs.length === 0) return legs;
+  
+  // Check each leg for round trip patterns
+  const normalizedLegs = [];
+  
+  for (const leg of legs) {
+    if (!leg.segments || leg.segments.length < 2) {
+      // Single segment or no segments - keep as-is
+      normalizedLegs.push(leg);
+      continue;
+    }
+    
+    const segments = leg.segments;
+    const firstSegment = segments[0];
+    
+    // Need departureAirport/arrivalAirport (API format) or departure/arrival (extracted format)
+    const origin = firstSegment.departureAirport || firstSegment.departure;
+    
+    if (!origin) {
+      // Can't determine origin, keep as-is
+      normalizedLegs.push(leg);
+      continue;
+    }
+    
+    // Check if any segment returns to origin (round trip pattern)
+    // This matches the logic from geminiService.ts: detectRoundTripPattern + segment splitting
+    let foundReturn = false;
+    for (let i = 1; i < segments.length; i++) {
+      const segment = segments[i];
+      const arrival = segment.arrivalAirport || segment.arrival;
+      
+      if (arrival && arrival.toUpperCase() === origin.toUpperCase()) {
+        // Found return flight - split segments (same logic as geminiService.ts lines 690-697)
+        console.error(`🔄 Splitting round trip: first ${i} segments are outbound, remaining are return`);
+        const outboundSegments = segments.slice(0, i);
+        const returnSegments = segments.slice(i);
+        
+        normalizedLegs.push({ segments: outboundSegments });
+        normalizedLegs.push({ segments: returnSegments });
+        foundReturn = true;
+        break;
+      }
+    }
+    
+    if (!foundReturn) {
+      // No round trip pattern detected, keep leg as-is
+      normalizedLegs.push(leg);
+    }
+  }
+  
+  return normalizedLegs;
+}
+
 function transformToApiFormat(flightData) {
-  // If the flightData already has the correct structure, return it as-is
+  // If the flightData already has the correct structure, check if round trip needs splitting
   if (flightData.trip && flightData.trip.legs) {
+    // Reuse the round trip splitting logic (same pattern as geminiService.ts)
+    const normalizedLegs = splitRoundTripLegs(flightData.trip.legs);
+    
+    if (normalizedLegs.length !== flightData.trip.legs.length) {
+      // Legs were split, return normalized structure
+      return {
+        ...flightData,
+        trip: {
+          ...flightData.trip,
+          legs: normalizedLegs
+        }
+      };
+    }
+    
     return flightData;
   }
   
