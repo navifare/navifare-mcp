@@ -1694,6 +1694,10 @@ app.post('/mcp', async (req, res) => {
           name: 'flight_pricecheck',
           title: 'Flight Price Check',
           description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
+          readOnlyHint: false,
+          destructiveHint: false,
+          readOnlyHint: false,
+          destructiveHint: false,
           inputSchema: {
             type: 'object',
             properties: {
@@ -1812,6 +1816,8 @@ app.post('/mcp', async (req, res) => {
           name: 'format_flight_pricecheck_request',
           title: 'Format Flight Request',
           description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
+          readOnlyHint: true,
+          destructiveHint: false,
           inputSchema: {
             type: 'object',
             properties: {
@@ -1928,6 +1934,15 @@ app.post('/mcp', async (req, res) => {
       
       console.log(`🔧 Calling tool: ${name}`);
       console.log('📝 Arguments:', JSON.stringify(args, null, 2));
+      
+      // Detect if client wants streaming (SSE)
+      const wantsStreaming = req.headers['accept']?.includes('text/event-stream') || 
+                             req.query.stream === 'true' ||
+                             req.headers['mcp-stream'] === 'true';
+      
+      // Session management
+      const sessionId = req.headers['mcp-session-id'] || 
+                        `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
       let result;
       
@@ -2181,65 +2196,185 @@ app.post('/mcp', async (req, res) => {
         
         console.log('📤 Search flights payload:', JSON.stringify(searchData, null, 2));
         
-        try {
-          // Transform to API format and sanitize the request
-          const apiRequest = transformToApiFormat(searchData);
-          console.log('📤 API Request after transformation:', JSON.stringify(apiRequest, null, 2));
-          const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
-          console.log('📤 API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
+        // If streaming is requested, use SSE
+        if (wantsStreaming) {
+          console.log('📡 Using SSE streaming mode');
           
-          // Define progress callback to stream results as they appear
-          const onProgress = (progressResults) => {
-            // Send progress notification via notifications/message
-            const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
-            const status = progressResults.status || 'IN_PROGRESS';
+          // Set SSE headers
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('Connection', 'keep-alive');
+          res.setHeader('Mcp-Session-Id', sessionId);
+          
+          // Send initial connection event
+          res.write(`: connected\n`);
+          res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+          
+          try {
+            // Transform to API format and sanitize the request
+            const apiRequest = transformToApiFormat(searchData);
+            const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
             
-            console.log(`📤 Streaming ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
-          };
-          
-          const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
-          console.log('✅ Search complete:', JSON.stringify(searchResult, null, 2));
-          
-          // Store the flight data globally so the widget can access it
-          global.lastFlightResults = searchResult;
-          
-          // Format message to display each offer on its own line
-          const resultCount = searchResult.totalResults || searchResult.results?.length || 0;
-          let formattedMessage = `Flight price search completed! Found ${resultCount} result(s):\n\n`;
-          
-          if (searchResult.results && searchResult.results.length > 0) {
-            searchResult.results.forEach((offer, index) => {
-              const rank = offer.rank || index + 1;
-              const price = offer.price || 'N/A';
-              const website = offer.website || 'Unknown';
-              const bookingUrl = offer.bookingUrl || '';
-              const fareType = offer.fareType || '';
+            // Define progress callback to stream results as they appear
+            const onProgress = (progressResults) => {
+              const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
+              const status = progressResults.status || 'IN_PROGRESS';
               
-              formattedMessage += `${rank}. ${website} - ${price}`;
-              if (fareType) {
-                formattedMessage += ` (${fareType})`;
+              console.log(`📤 Streaming ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
+              
+              // Send progress event via SSE
+              const progressEvent = {
+                jsonrpc: '2.0',
+                method: 'notifications/message',
+                params: {
+                  level: 'info',
+                  data: {
+                    message: `Flight search progress: Found ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`,
+                    results: progressResults,
+                    resultCount: resultCount,
+                    status: status
+                  }
+                }
+              };
+              
+              res.write(`event: progress\ndata: ${JSON.stringify(progressEvent)}\n\n`);
+            };
+            
+            const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
+            console.log('✅ Search complete:', JSON.stringify(searchResult, null, 2));
+            
+            // Store the flight data globally so the widget can access it
+            global.lastFlightResults = searchResult;
+            
+            // Format message to display each offer on its own line
+            const resultCount = searchResult.totalResults || searchResult.results?.length || 0;
+            let formattedMessage = `Flight price search completed! Found ${resultCount} result(s):\n\n`;
+            
+            if (searchResult.results && searchResult.results.length > 0) {
+              searchResult.results.forEach((offer, index) => {
+                const rank = offer.rank || index + 1;
+                const price = offer.price || 'N/A';
+                const website = offer.website || 'Unknown';
+                const bookingUrl = offer.bookingUrl || '';
+                const fareType = offer.fareType || '';
+                
+                formattedMessage += `${rank}. ${website} - ${price}`;
+                if (fareType) {
+                  formattedMessage += ` (${fareType})`;
+                }
+                if (bookingUrl) {
+                  formattedMessage += `\n   🔗 ${bookingUrl}`;
+                }
+                formattedMessage += '\n\n';
+              });
+            } else {
+              formattedMessage += 'No results found.\n';
+            }
+            
+            const finalResult = {
+              message: formattedMessage.trim(),
+              searchResult: searchResult,
+              status: searchResult.status || 'COMPLETED'
+            };
+            
+            // Send final result as SSE event
+            const response = {
+              jsonrpc: '2.0',
+              id: req.body.id,
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify(finalResult, null, 2)
+                  }
+                ]
               }
-              if (bookingUrl) {
-                formattedMessage += `\n   🔗 ${bookingUrl}`;
+            };
+            
+            res.write(`event: complete\ndata: ${JSON.stringify(response)}\n\n`);
+            res.end();
+            return;
+            
+          } catch (apiError) {
+            console.error('❌ API Error:', apiError);
+            const errorResponse = {
+              jsonrpc: '2.0',
+              id: req.body.id,
+              error: {
+                code: -32603,
+                message: 'Internal error',
+                data: apiError.message
               }
-              formattedMessage += '\n\n';
-            });
-          } else {
-            formattedMessage += 'No results found.\n';
+            };
+            res.write(`event: error\ndata: ${JSON.stringify(errorResponse)}\n\n`);
+            res.end();
+            return;
           }
-          
-          result = {
-            message: formattedMessage.trim(),
-            searchResult: searchResult,
-            status: searchResult.status || 'COMPLETED'
-          };
-        } catch (apiError) {
-          console.error('❌ API Error:', apiError);
-          result = {
-            message: `Flight search failed: ${apiError.message}`,
-            error: apiError.message,
-            searchData: searchData
-          };
+        } else {
+          // Standard JSON response (non-streaming)
+          try {
+            // Transform to API format and sanitize the request
+            const apiRequest = transformToApiFormat(searchData);
+            console.log('📤 API Request after transformation:', JSON.stringify(apiRequest, null, 2));
+            const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
+            console.log('📤 API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
+            
+            // Set session header even for non-streaming
+            res.setHeader('Mcp-Session-Id', sessionId);
+            
+            // Define progress callback to stream results as they appear
+            const onProgress = (progressResults) => {
+              // Send progress notification via notifications/message
+              const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
+              const status = progressResults.status || 'IN_PROGRESS';
+              
+              console.log(`📤 Streaming ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
+            };
+            
+            const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
+            console.log('✅ Search complete:', JSON.stringify(searchResult, null, 2));
+            
+            // Store the flight data globally so the widget can access it
+            global.lastFlightResults = searchResult;
+            
+            // Format message to display each offer on its own line
+            const resultCount = searchResult.totalResults || searchResult.results?.length || 0;
+            let formattedMessage = `Flight price search completed! Found ${resultCount} result(s):\n\n`;
+            
+            if (searchResult.results && searchResult.results.length > 0) {
+              searchResult.results.forEach((offer, index) => {
+                const rank = offer.rank || index + 1;
+                const price = offer.price || 'N/A';
+                const website = offer.website || 'Unknown';
+                const bookingUrl = offer.bookingUrl || '';
+                const fareType = offer.fareType || '';
+                
+                formattedMessage += `${rank}. ${website} - ${price}`;
+                if (fareType) {
+                  formattedMessage += ` (${fareType})`;
+                }
+                if (bookingUrl) {
+                  formattedMessage += `\n   🔗 ${bookingUrl}`;
+                }
+                formattedMessage += '\n\n';
+              });
+            } else {
+              formattedMessage += 'No results found.\n';
+            }
+            
+            result = {
+              message: formattedMessage.trim(),
+              searchResult: searchResult,
+              status: searchResult.status || 'COMPLETED'
+            };
+          } catch (apiError) {
+            console.error('❌ API Error:', apiError);
+            result = {
+              message: `Flight search failed: ${apiError.message}`,
+              error: apiError.message,
+              searchData: searchData
+            };
+          }
         }
       } else {
         res.status(400).json({
@@ -2253,27 +2388,36 @@ app.post('/mcp', async (req, res) => {
         return;
       }
       
-      console.log('✅ Tool execution successful');
-      
-      // Format response
-      const response = {
-        jsonrpc: '2.0',
-        id: req.body.id,
-        result: {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2)
-            }
-          ]
-        }
-      };
-      
-      // Debug: Log the response being sent
-      console.log('📤 Sending response:', JSON.stringify(response, null, 2));
-      
-      res.json(response);
-      return;
+      // Only send JSON response if not streaming (streaming responses are sent above)
+      // For flight_pricecheck with streaming, we already sent SSE response above
+      // For all other cases (non-streaming or other tools), send JSON
+      if (!(wantsStreaming && name === 'flight_pricecheck')) {
+        console.log('✅ Tool execution successful');
+        
+        // Set session header for non-streaming responses
+        res.setHeader('Mcp-Session-Id', sessionId);
+        
+        // Format response
+        const response = {
+          jsonrpc: '2.0',
+          id: req.body.id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2)
+              }
+            ]
+          }
+        };
+        
+        // Debug: Log the response being sent
+        console.log('📤 Sending response:', JSON.stringify(response, null, 2));
+        
+        res.json(response);
+        return;
+      }
+      // Streaming responses for flight_pricecheck are handled above and already returned
     }
     
     // Unknown method

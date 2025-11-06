@@ -1521,21 +1521,97 @@ process.stdin.on('data', async (data) => {
             tools: [
             {
               name: 'flight_pricecheck',
-              description: 'Find a better price for a specific flight the user has already found. This tool searches multiple booking sources to compare prices and find cheaper alternatives for the exact same flight details.',
+              title: 'Flight Price Check',
+              description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
+              readOnlyHint: false,
+              destructiveHint: false,
               inputSchema: {
                 type: 'object',
                 properties: {
-                  flightData: {
+                  trip: {
                     type: 'object',
-                    description: 'Complete flight data payload containing the specific flight details the user found, including airline, flight numbers, airports, dates, times, and the price they saw'
-                  }
+                    description: 'Flight trip details including segments, passengers, and travel class',
+                    properties: {
+                      legs: {
+                        type: 'array',
+                        description: 'Array of flight legs (one for outbound, one for return in round trips)',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            segments: {
+                              type: 'array',
+                              description: 'Array of flight segments within this leg',
+                              items: {
+                                type: 'object',
+                                properties: {
+                                  airline: { type: 'string', description: 'Two-letter IATA airline code (e.g., "LX", "AZ", "BA")' },
+                                  flightNumber: { type: 'string', description: 'Numeric flight number without airline prefix (e.g., "1612", "573")' },
+                                  departureAirport: { type: 'string', description: 'Three-letter IATA departure airport code (e.g., "ZRH", "MXP")' },
+                                  arrivalAirport: { type: 'string', description: 'Three-letter IATA arrival airport code (e.g., "LHR", "FCO")' },
+                                  departureDate: { type: 'string', description: 'Departure date in YYYY-MM-DD format (e.g., "2025-12-16")' },
+                                  departureTime: { type: 'string', description: 'Departure time in HH:MM or HH:MM:SS format (e.g., "07:10" or "07:10:00")' },
+                                  arrivalTime: { type: 'string', description: 'Arrival time in HH:MM or HH:MM:SS format (e.g., "08:25" or "08:25:00")' },
+                                  plusDays: { type: 'number', description: 'Days to add to arrival date if arrival is next day (0 for same day, 1 for next day)' }
+                                },
+                                required: ['airline', 'flightNumber', 'departureAirport', 'arrivalAirport', 'departureDate', 'departureTime', 'arrivalTime', 'plusDays']
+                              }
+                            }
+                          },
+                          required: ['segments']
+                        }
+                      },
+                      travelClass: { type: 'string', description: 'Travel class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST', enum: ['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'] },
+                      adults: { type: 'number', description: 'Number of adult passengers', minimum: 1 },
+                      children: { type: 'number', description: 'Number of child passengers', minimum: 0 },
+                      infantsInSeat: { type: 'number', description: 'Number of infants requiring a seat', minimum: 0 },
+                      infantsOnLap: { type: 'number', description: 'Number of infants on lap', minimum: 0 }
+                    },
+                    required: ['legs', 'travelClass', 'adults', 'children', 'infantsInSeat', 'infantsOnLap']
+                  },
+                  source: { type: 'string', description: 'Source identifier for the original price (e.g., "ChatGPT", "User", "Booking.com")' },
+                  price: { type: 'string', description: 'Reference price found by the user (e.g., "84.00", "200.50")' },
+                  currency: { type: 'string', description: 'Three-letter ISO currency code (e.g., "EUR", "USD", "GBP")', pattern: '^[A-Z]{3}$' },
+                  location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "VA", "IT", "US"). Defaults to "VA" if not provided.', pattern: '^[A-Z]{2}$', default: 'VA' }
                 },
-                required: ['flightData']
+                required: ['trip', 'source', 'price', 'currency']
+              },
+              outputSchema: {
+                type: 'object',
+                description: 'Flight price comparison results',
+                properties: {
+                  message: { type: 'string', description: 'Summary message about the search results' },
+                  searchResult: {
+                    type: 'object',
+                    description: 'Detailed search results',
+                    properties: {
+                      request_id: { type: 'string', description: 'Unique identifier for this search request' },
+                      status: { type: 'string', description: 'Search status: IN_PROGRESS, COMPLETED, or FAILED' },
+                      totalResults: { type: 'number', description: 'Total number of price comparison results found' },
+                      results: {
+                        type: 'array',
+                        description: 'Array of price comparison results',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            rank: { type: 'number', description: 'Ranking of this result' },
+                            price: { type: 'string', description: 'Price with currency (e.g., "84.00 EUR")' },
+                            website: { type: 'string', description: 'Booking website name' },
+                            bookingUrl: { type: 'string', description: 'URL to book this flight' },
+                            fareType: { type: 'string', description: 'Type of fare (Standard Fare or Special Fare)' }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  status: { type: 'string', description: 'Overall status of the search' }
+                }
               }
             },
+            // DEACTIVATED: Image extraction tool (commented out but kept for future use)
+            /*
             {
               name: 'extract_flight_from_image',
-              description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details.',
+              description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. ⚠️ CRITICAL: Images MUST be provided as base64-encoded strings. File IDs, file paths, or URLs will NOT work and will cause the tool to fail. You MUST convert images to base64 encoding before calling this tool.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -1546,31 +1622,63 @@ process.stdin.on('data', async (data) => {
                       properties: {
                         data: {
                           type: 'string',
-                          description: 'Base64-encoded image data (without data:image/... prefix)'
+                          description: '⚠️ CRITICAL REQUIREMENT: Image data MUST be a base64-encoded string. NO OTHER FORMAT WILL WORK. Do NOT send file IDs (like "file_000000009ca4720aaf20f16309d0c674"), file paths (like "/mnt/data/image.png"), or URLs. These will be rejected and the tool will fail. Format: Provide ONLY the raw base64 string without any data URI prefix. Example CORRECT: "iVBORw0KGgoAAAANSUhEUgAA..." (just the base64 characters). Example INCORRECT: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..." (has prefix - will fail). Example INCORRECT: "file_000000009ca4720aaf20f16309d0c674" (file ID - will fail). Example INCORRECT: "/mnt/data/image.png" (file path - will fail). If you have an image file, you MUST: 1) Read the file content, 2) Convert it to base64 encoding, 3) Provide ONLY the base64 string (no prefix, no file path, no file ID).'
                         },
                         mimeType: {
                           type: 'string',
-                          description: 'MIME type of the image (e.g., image/jpeg, image/png)'
+                          description: 'MIME type of the image. Required values: "image/png", "image/jpeg", "image/jpg", "image/webp", or "image/gif". Must match the actual image format.'
                         }
                       },
                       required: ['data', 'mimeType']
                     },
                     minItems: 1,
-                    description: 'Array of images to analyze for flight details'
+                    description: 'Array of images to analyze for flight details. ⚠️ CRITICAL: Each image MUST have base64-encoded data. File paths or file IDs will NOT work and will be rejected.'
                   }
                 },
                 required: ['images']
               }
             },
+            */
             {
               name: 'format_flight_pricecheck_request',
-              description: 'Parse flight details from natural language or extracted image data to format them for price comparison. Use this when the user mentions a specific flight they found and wants to check for better prices, or when extract_flight_from_image returns incomplete data. This tool will parse and format the request, asking follow-up questions if information is missing. Once complete, use the returned flightData to call flight_pricecheck. IMPORTANT: This tool is stateless - each call is independent and does not retain previous context. If you receive a needsMoreInfo response and need to provide missing data, you MUST include the complete previous flight details (from the extracted data or previous response) along with the missing information in the user_request field, otherwise Gemini will not have the flight context.',
+              title: 'Format Flight Request',
+              description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
+              readOnlyHint: true,
+              destructiveHint: false,
               inputSchema: {
                 type: 'object',
                 properties: {
-                  user_request: { type: 'string', description: 'Describe the specific flight you found and want to check for better prices (e.g., "I found LX 1612 from MXP to FCO on Nov 4th at 6:40 PM for 150 EUR"). You can also paste extracted data from extract_flight_from_image here if it\'s incomplete. IMPORTANT: If providing missing data after a needsMoreInfo response, include the complete previous flight details (e.g., paste the full extracted JSON and add the missing fields) so Gemini has full context.' }
+                  user_request: { 
+                    type: 'string', 
+                    description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.' 
+                  }
                 },
                 required: ['user_request']
+              },
+              outputSchema: {
+                type: 'object',
+                description: 'Formatted flight data or request for more information',
+                properties: {
+                  message: { type: 'string', description: 'Status message or instructions' },
+                  needsMoreInfo: { type: 'boolean', description: 'Whether additional information is required' },
+                  missingFields: { 
+                    type: 'array', 
+                    description: 'List of missing required fields if needsMoreInfo is true',
+                    items: { type: 'string' }
+                  },
+                  flightData: {
+                    type: 'object',
+                    description: 'Formatted flight data ready for flight_pricecheck (only present if needsMoreInfo is false)',
+                    properties: {
+                      trip: { type: 'object' },
+                      source: { type: 'string' },
+                      price: { type: 'string' },
+                      currency: { type: 'string' },
+                      location: { type: 'string' }
+                    }
+                  },
+                  readyForPriceCheck: { type: 'boolean', description: 'Whether the data is ready to use with flight_pricecheck' }
+                }
               }
             }
           ]
@@ -1590,6 +1698,8 @@ process.stdin.on('data', async (data) => {
         
         let result;
         
+        // DEACTIVATED: Image extraction tool handler (commented out but kept for future use)
+        /*
         if (name === 'extract_flight_from_image') {
             console.error('📷 extract_flight_from_image tool called!');
 
@@ -1750,7 +1860,9 @@ process.stdin.on('data', async (data) => {
               }
             }
             console.error('🏁 extract_flight_from_image tool finished');
-        } else if (name === 'format_flight_pricecheck_request') {
+        }
+        */
+        if (name === 'format_flight_pricecheck_request') {
           console.error('🚀 Starting format_flight_pricecheck_request...');
           
           // Validate that we have user_request
@@ -1796,13 +1908,13 @@ process.stdin.on('data', async (data) => {
         } else if (name === 'flight_pricecheck') {
           console.error('🔍 Processing flight_pricecheck tool...');
           
-          // Get the flight data from the input
-          const flightData = args.flightData;
-          
-          // Preserve the source from the formatted request (or default to MCP)
-          const searchData = {
-            ...flightData,
-            source: flightData.source || 'MCP'
+          // Support both old format (flightData) and new format (direct properties)
+          const searchData = args.flightData || {
+            trip: args.trip,
+            source: args.source || 'MCP',
+            price: args.price,
+            currency: args.currency,
+            location: args.location
           };
           
           console.error('📤 Search flights payload:', JSON.stringify(searchData, null, 2));
@@ -1873,7 +1985,7 @@ process.stdin.on('data', async (data) => {
             result = {
               message: formattedMessage.trim(),
               searchResult: searchResult,
-              searchData: searchData
+              status: searchResult.status || 'COMPLETED'
             };
           } catch (apiError) {
             console.error('❌ API Error:', apiError);
