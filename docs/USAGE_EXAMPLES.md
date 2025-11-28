@@ -173,15 +173,17 @@ You can also use `submit_session` directly without image extraction:
 ## Testing in MCP Inspector
 
 ### Test Files Available:
-- `test-extract-image.json` - Sample image extraction input
-- `test-submit-session.json` - Sample session submission input  
-- `test-get-results.json` - Sample results retrieval input
+- `test/test-extract-image.json` - Sample image extraction input
+- `test/test-submit-session.json` - Sample session submission input  
+- `test/test-get-results.json` - Sample results retrieval input
 
 ### Running Tests:
 ```bash
 cd /Users/simonenavifare/navifare/frontend/front-end/mcp/navifare-mcp
 npx @modelcontextprotocol/inspector node dist/index.js
 ```
+
+See [`test/README.md`](../test/README.md) for more information about test files.
 
 Then test each tool with the provided JSON inputs.
 

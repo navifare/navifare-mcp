@@ -10,7 +10,7 @@ This MCP server wraps the Navifare REST API as MCP tools for flight price compar
 
 This server complies with Anthropic's MCP Directory Policy. See [COMPLIANCE.md](./COMPLIANCE.md) for details.
 
-**Privacy Policy**: https://navifare.com/terms  
+**Privacy Policy and Terms of Service**: https://navifare.com/terms  
 **Contact**: contact@navifare.com  
 **Privacy Inquiries**: privacy@navifare.com
 
@@ -26,13 +26,28 @@ This server complies with Anthropic's MCP Directory Policy. See [COMPLIANCE.md](
 
 ## Examples
 
-See [USAGE_EXAMPLES.md](./USAGE_EXAMPLES.md) for complete usage examples.
+See [docs/USAGE_EXAMPLES.md](./docs/USAGE_EXAMPLES.md) for complete usage examples.
 
 ## Documentation
 
-- [COMPLIANCE.md](./COMPLIANCE.md) - Anthropic MCP Directory compliance details
-- [USAGE_EXAMPLES.md](./USAGE_EXAMPLES.md) - Complete usage examples
-- [OPENAI_INTEGRATION.md](./OPENAI_INTEGRATION.md) - OpenAI Apps SDK integration guide
+All documentation is in the [`docs/`](./docs/) directory:
+
+- [COMPLIANCE.md](./docs/COMPLIANCE.md) - Anthropic MCP Directory compliance details
+- [USAGE_EXAMPLES.md](./docs/USAGE_EXAMPLES.md) - Complete usage examples
+- [QUICKSTART.md](./docs/QUICKSTART.md) - Quick start guide
+- [LOCAL_DEPLOYMENT.md](./docs/LOCAL_DEPLOYMENT.md) - Local deployment guide
+- [RENDER_DEPLOYMENT_GUIDE.md](./docs/RENDER_DEPLOYMENT_GUIDE.md) - Production deployment guide
+- [CLAUDE_SUBMISSION_CHECKLIST.md](./docs/CLAUDE_SUBMISSION_CHECKLIST.md) - Claude submission checklist
+
+## Testing
+
+Test files are located in the [`test/`](./test/) directory. See individual test files for usage examples.
+
+## Scripts
+
+Helper scripts are in the [`scripts/`](./scripts/) directory:
+- `start-local.sh` - Start local development server
+- `deploy-to-render.sh` - Prepare for Render deployment
 
 Reference: https://www.stainless.com/mcp/from-rest-api-to-mcp-server
 

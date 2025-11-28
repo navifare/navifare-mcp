@@ -74,7 +74,7 @@ curl -N -X POST "http://localhost:2091/mcp?stream=true" \
 
 ### Run Test Suite
 ```bash
-node test-streamable-http.js
+node test/test-streamable-http.js
 ```
 
 ## Verification

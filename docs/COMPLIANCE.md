@@ -26,6 +26,7 @@ This document outlines Navifare MCP Server's compliance with Anthropic's MCP Dir
 
 ### Developer Requirements
 - ✅ **Privacy Policy**: Available at https://navifare.com/terms
+- ✅ **Terms of Service**: Available at https://navifare.com/terms
 - ✅ **Contact Information**: 
   - Email: contact@navifare.com
   - Privacy: privacy@navifare.com
@@ -49,16 +50,23 @@ This document outlines Navifare MCP Server's compliance with Anthropic's MCP Dir
 - **readOnlyHint**: `true` - Tool only formats/parses data, no external calls
 - **destructiveHint**: `false` - Tool does not modify or delete data
 
-## Privacy Policy
+## Privacy Policy and Terms of Service
 
-Our privacy policy is available at: https://navifare.com/terms
+Our privacy policy and terms of service are available at: https://navifare.com/terms
 
-The policy covers:
+The privacy policy covers:
 - Data collection practices
 - Data usage and retention
 - User rights
 - Third-party services
 - Contact information for privacy inquiries
+
+The terms of service cover:
+- Service usage guidelines
+- User responsibilities
+- Service limitations
+- Intellectual property rights
+- Dispute resolution
 
 ## Contact Information
 
@@ -72,7 +80,7 @@ For Anthropic review, please contact us at contact@navifare.com to obtain a test
 
 ## Examples
 
-See `USAGE_EXAMPLES.md` for three+ working examples demonstrating core functionality:
+See [`docs/USAGE_EXAMPLES.md`](./USAGE_EXAMPLES.md) for three+ working examples demonstrating core functionality:
 1. Complete workflow with image extraction
 2. Manual input example
 3. Price comparison results display

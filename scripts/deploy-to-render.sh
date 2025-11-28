@@ -54,17 +54,6 @@ echo "🔨 Building application..."
 npm ci
 npm run build
 
-# Build the React widget
-echo "🎨 Building React widget..."
-cd web
-npm ci
-npm run build
-cd ..
-
-# Copy the built widget to the correct location
-echo "📦 Copying widget files..."
-cp web/dist/component.js src/components/
-
 echo "✅ Build complete!"
 
 # Check if .env file exists
