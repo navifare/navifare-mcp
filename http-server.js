@@ -1502,6 +1502,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// Serve static files (for logo, etc.)
+app.use(express.static('.'));
+
 // Parse JSON bodies
 app.use(express.json({ limit: '50mb' }));
 
