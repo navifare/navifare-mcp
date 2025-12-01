@@ -231,7 +231,7 @@ function fallbackParseFlightRequest(userRequest) {
     source: 'MCP',
     price: formattedPrice ?? '0.00',
     currency,
-    location: 'XX',
+    location: 'ZZ',
   };
 
   const missingFields = [];
@@ -550,19 +550,19 @@ function sanitizeSubmitArgs(rawArgs) {
     args.currency = args.currency.trim().toUpperCase();
   }
 
-  // Location handling: default to VA unless a valid 2-letter country code is provided
+  // Location handling: default to ZZ unless a valid 2-letter country code is provided
   if (typeof args.location === 'string' && args.location.trim()) {
     const loc = args.location.trim().toUpperCase();
     // Check if it's a valid 2-letter ISO country code
     if (loc.length === 2 && /^[A-Z]{2}$/.test(loc)) {
       args.location = loc;
     } else {
-      // Not a valid 2-letter code, default to VA
-      args.location = 'VA';
+      // Not a valid 2-letter code, default to ZZ
+      args.location = 'ZZ';
     }
   } else {
-    // No location provided, default to VA
-    args.location = 'VA';
+    // No location provided, default to ZZ
+    args.location = 'ZZ';
   }
 
   // Ensure source is valid (backend only accepts specific values)
@@ -1881,7 +1881,7 @@ process.stdin.on('data', async (data) => {
                   source: { type: 'string', description: 'Source identifier for the original price (e.g., "ChatGPT", "User", "Booking.com")' },
                   price: { type: 'string', description: 'Reference price found by the user (e.g., "84.00", "200.50")' },
                   currency: { type: 'string', description: 'Three-letter ISO currency code (e.g., "EUR", "USD", "GBP")', pattern: '^[A-Z]{3}$' },
-                  location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "VA", "IT", "US"). Defaults to "VA" if not provided.', pattern: '^[A-Z]{2}$', default: 'VA' }
+                  location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "ES", "IT", "US"). If unsure, default to "ZZ" ', pattern: '^[A-Z]{2}$', default: 'ZZ' }
                 },
                 required: ['trip', 'source', 'price', 'currency']
               },

@@ -236,7 +236,7 @@ function fallbackParseFlightRequest(userRequest) {
     source: 'MCP',
     price: formattedPrice ?? '0.00',
     currency,
-    location: 'XX',
+    location: 'ZZ',
   };
 
   const missingFields = [];
@@ -1580,7 +1580,7 @@ app.get('/mcp', (req, res) => {
             source: { type: 'string', description: 'Source identifier for the original price (e.g., "ChatGPT", "User", "Booking.com")' },
             price: { type: 'string', description: 'Reference price found by the user (e.g., "84.00", "200.50")' },
             currency: { type: 'string', description: 'Three-letter ISO currency code (e.g., "EUR", "USD", "GBP")', pattern: '^[A-Z]{3}$' },
-            location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "VA", "IT", "US"). Defaults to "VA" if not provided.', pattern: '^[A-Z]{2}$', default: 'VA' }
+            location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "ES", "IT", "US"). If unsure, default to "ZZ" ', pattern: '^[A-Z]{2}$', default: 'ZZ' }
           },
           required: ['trip', 'source', 'price', 'currency']
         },
@@ -2056,7 +2056,7 @@ function sanitizeSubmitArgs(rawArgs) {
               source: { type: 'string', description: 'Source identifier for the original price (e.g., "ChatGPT", "User", "Booking.com")' },
               price: { type: 'string', description: 'Reference price found by the user (e.g., "84.00", "200.50")' },
               currency: { type: 'string', description: 'Three-letter ISO currency code (e.g., "EUR", "USD", "GBP")', pattern: '^[A-Z]{3}$' },
-              location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "VA", "IT", "US"). Defaults to "VA" if not provided.', pattern: '^[A-Z]{2}$', default: 'VA' }
+              location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "ES", "IT", "US"). If unsure, default to "ZZ" ', pattern: '^[A-Z]{2}$', default: 'ZZ' }
             },
             required: ['trip', 'source', 'price', 'currency']
           },
