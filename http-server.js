@@ -1516,7 +1516,7 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy',
     service: 'navifare-mcp',
-    version: '0.1.0',
+    version: '0.1.4',
     timestamp: new Date().toISOString()
   });
 });
@@ -1525,7 +1525,7 @@ app.get('/health', (req, res) => {
 app.get('/mcp', (req, res) => {
   res.json({
     name: 'navifare-mcp',
-    version: '0.1.0',
+    version: '0.1.4',
     description: 'Navifare finds a better price for a specific flight the user already found. Users should provide flight details conversationally, which will be structured into the required format.',
     tools: [
       {
