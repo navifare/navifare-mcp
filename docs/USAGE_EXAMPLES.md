@@ -20,6 +20,7 @@ This document only describes the **current** workflow using these two tools.
 
 - **Round-trip flights only**: One-way trips are not yet supported. Requests with a single leg will return an error immediately.
 - **Same origin/destination**: Open-jaw trips (returning to a different airport) are not yet supported. The return flight must depart from the outbound destination and arrive at the outbound origin.
+- **55-second polling timeout**: The MCP SDK has a hardcoded 60-second timeout. For searches requiring more time, use direct HTTP fetch with a custom timeout.
 
 ---
 
