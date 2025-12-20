@@ -16,6 +16,11 @@ If you want to work with **screenshots or images**, the recommended pattern is:
 
 This document only describes the **current** workflow using these two tools.
 
+### Current Limitations
+
+- **Round-trip flights only**: One-way trips are not yet supported
+- **Same origin/destination**: Open-jaw trips (returning to a different airport) are not yet supported
+
 ---
 
 ## 1. Pure Text Workflow (Recommended)

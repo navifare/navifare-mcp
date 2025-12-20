@@ -108,7 +108,10 @@ Search multiple booking sources to find better prices for a specific flight the 
 }
 ```
 
+## Current Limitations
 
+- **Round-trip flights only**: One-way trips are not yet supported
+- **Same origin/destination**: Open-jaw trips (returning to a different airport) are not yet supported
 
 ## Revenue Share
 
