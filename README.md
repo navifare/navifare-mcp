@@ -112,7 +112,6 @@ Search multiple booking sources to find better prices for a specific flight the 
 
 - **Round-trip flights only**: One-way trips are not yet supported. Requests with a single leg will return an error immediately.
 - **Same origin/destination**: Open-jaw trips (returning to a different airport) are not yet supported. The return flight must depart from the outbound destination and arrive at the outbound origin.
-- **55-second polling timeout**: The MCP SDK's `StreamableHTTPClientTransport` has a hardcoded 60-second timeout. Our server polls for up to 55 seconds to fit within this limit. For searches requiring more time, use direct HTTP fetch with JSON-RPC (see [Transports - MCP](https://modelcontextprotocol.io/docs/concepts/transports)).
 
 ## Revenue Share
 
