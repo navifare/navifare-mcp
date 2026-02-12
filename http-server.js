@@ -2705,6 +2705,8 @@ app.post('/mcp', async (req, res) => {
 
             // Send final JSON-RPC response in MCP-compliant format
             // Per MCP spec: send as default message event (no custom event type)
+            // Best practice: provide both text (stringified JSON for backwards compat)
+            // and structuredContent (parsed JSON for modern clients like Claude Desktop)
             const response = {
               jsonrpc: '2.0',
               id: req.body.id,
@@ -2714,8 +2716,8 @@ app.post('/mcp', async (req, res) => {
                     type: 'text',
                     text: JSON.stringify(finalResult, null, 2)
                   }
-                ]
-                // Remove isError: false - not needed for successful responses per MCP spec
+                ],
+                structuredContent: finalResult
               }
             };
 
@@ -2938,7 +2940,9 @@ app.post('/mcp', async (req, res) => {
           // Result already has proper MCP format with content array
           mcpResult = result;
         } else {
-          // Wrap in MCP-compliant format with content array and isError field
+          // Wrap in MCP-compliant format with content array, structuredContent, and isError (only for errors)
+          // Per MCP spec best practice: provide both text (stringified JSON for backwards compat)
+          // and structuredContent (parsed JSON for modern clients like Claude Desktop)
           mcpResult = {
             content: [
               {
@@ -2946,8 +2950,13 @@ app.post('/mcp', async (req, res) => {
                 text: JSON.stringify(result, null, 2)
               }
             ],
-            isError: !!(result.error || result.status === 'error')
+            structuredContent: result
           };
+
+          // Only add isError field for actual errors (not for successful responses)
+          if (result.error || result.status === 'error') {
+            mcpResult.isError = true;
+          }
         }
 
         const response = {
