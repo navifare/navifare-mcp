@@ -12,6 +12,7 @@ import { submit_session, submit_and_poll_session } from './dist/navifare.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import sharp from 'sharp';
+import { AI_MODEL } from './src/config/aiModel.js';
 
 dotenv.config();
 
@@ -266,26 +267,33 @@ function fallbackParseFlightRequest(userRequest) {
 
 async function parseFlightRequest(userRequest) {
   try {
-            console.error('🔍 Starting Gemini request...');
-            console.error('📝 User request:', userRequest);
-            console.error('🔑 API key length:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 'Not set');
-            console.error('🔑 API key starts with:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 10) + '...' : 'Not set');
+    console.error('🔍 Starting Gemini request...');
+    console.error('📝 User request:', userRequest);
+    console.error('🔑 API key length:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 'Not set');
+    console.error('🔑 API key starts with:', process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 10) + '...' : 'Not set');
 
-            const model = getGeminiAI().getGenerativeModel({ model: "gemini-2.5-flash" });
-            console.error('🤖 Model initialized:', model);
-    
+    const model = getGeminiAI().getGenerativeModel({ model: AI_MODEL });
+    console.error('🤖 Model initialized:', model);
+
     // Get current date context dynamically
     const currentYear = new Date().getFullYear();
     const currentDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    
+
     const prompt = `Analyze this flight request: "${userRequest}"
 
 First, identify what flight information the user HAS provided and what is MISSING.
 
 CRITICAL REQUIREMENTS:
 1. AIRLINE: Use the 2-3 letter IATA airline code (e.g., "AZ", "LH", "BA", "AF"), NOT the airline name (e.g., NOT "ITA Airways", "Lufthansa", "British Airways"). If only the airline name is provided, convert it to its IATA code.
-2. DATES: Use the CURRENT YEAR (${currentYear}) for dates unless explicitly specified otherwise. If a date appears to be in the past (e.g., 2014, 2023), convert it to ${currentYear} or the appropriate future year. For dates without a year, if month/day >= today (${currentDate}), use ${currentYear}; if earlier, use ${currentYear + 1}. Dates must be in YYYY-MM-DD format.
-3. TIMES: Convert times like "6:40 PM" or "6.40pm" to 24-hour format "HH:MM:SS" (e.g., "18:40:00"). Always respect AM/PM indicators:
+2. AIRPORTS: Use 3-letter IATA codes. IMPORTANT: When the user mentions a city name (e.g., "Milan", "Rome", "New York"), ALWAYS prefer city-level multi-airport IATA codes over individual airport codes:
+   - Milan → MIL (NOT MXP or LIN)
+   - Rome → ROM (NOT FCO or CIA)
+   - New York → NYC (NOT JFK, LGA, or EWR)
+   - London → LON (NOT LHR, LGW, STN, or LTN)
+   - Paris → PAR (NOT CDG or ORY)
+   Only use individual airport codes (e.g., MXP, FCO) if the user explicitly specifies a particular airport name (e.g., "Milan Malpensa", "Rome Fiumicino").
+3. DATES: Use the CURRENT YEAR (${currentYear}) for dates unless explicitly specified otherwise. If a date appears to be in the past (e.g., 2014, 2023), convert it to ${currentYear} or the appropriate future year. For dates without a year, if month/day >= today (${currentDate}), use ${currentYear}; if earlier, use ${currentYear + 1}. Dates must be in YYYY-MM-DD format.
+4. TIMES: Convert times like "6:40 PM" or "6.40pm" to 24-hour format "HH:MM:SS" (e.g., "18:40:00"). Always respect AM/PM indicators:
    - 1:55 PM → 13:55:00 (add 12 hours)
    - 10:45 PM → 22:45:00 (add 12 hours)
    - 1:55 AM → 01:55:00 (keep same)
@@ -313,32 +321,32 @@ If the user has NOT provided complete information, analyze what they provided an
 
 Return ONLY JSON.`;
 
-            // Add timeout to prevent hanging
-            const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Request timeout after 45 seconds')), 45000) // Set to 45 seconds to work around MCP Inspector timeout
-            );
-            
-            console.error('📤 Sending request to Gemini...');
-            console.error('📝 Prompt length:', prompt.length);
-            console.error('📝 Prompt preview:', prompt.substring(0, 200) + '...');
-            
-            const startTime = Date.now();
-            console.error('⏰ Starting Gemini API call at:', new Date().toISOString());
-            
-            const result = await Promise.race([
-              model.generateContent(prompt),
-              timeoutPromise
-            ]);
-            
-            const endTime = Date.now();
-            console.error('⏰ Gemini API call completed in:', endTime - startTime, 'ms');
-            
-            console.error('✅ Received response from Gemini');
-            const response = await result.response;
-            const text = response.text();
-            console.error('📥 Raw response length:', text.length);
-            console.error('📥 Raw response preview:', text.substring(0, 200) + '...');
-    
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Request timeout after 45 seconds')), 45000) // Set to 45 seconds to work around MCP Inspector timeout
+    );
+
+    console.error('📤 Sending request to Gemini...');
+    console.error('📝 Prompt length:', prompt.length);
+    console.error('📝 Prompt preview:', prompt.substring(0, 200) + '...');
+
+    const startTime = Date.now();
+    console.error('⏰ Starting Gemini API call at:', new Date().toISOString());
+
+    const result = await Promise.race([
+      model.generateContent(prompt),
+      timeoutPromise
+    ]);
+
+    const endTime = Date.now();
+    console.error('⏰ Gemini API call completed in:', endTime - startTime, 'ms');
+
+    console.error('✅ Received response from Gemini');
+    const response = await result.response;
+    const text = response.text();
+    console.error('📥 Raw response length:', text.length);
+    console.error('📥 Raw response preview:', text.substring(0, 200) + '...');
+
     // Clean up the response text (remove markdown code blocks if present)
     let cleanedText = text.trim();
     console.error('🧹 Cleaning response...');
@@ -349,14 +357,14 @@ Return ONLY JSON.`;
       cleanedText = cleanedText.replace(/^```\s*/, '').replace(/\s*```$/, '');
       console.error('🧹 Removed ``` markdown');
     }
-    
+
     console.error('🧹 Cleaned text preview:', cleanedText.substring(0, 200) + '...');
-    
+
     // Parse the JSON response
     const flightData = JSON.parse(cleanedText);
     console.error('✅ Successfully parsed JSON');
     console.error('🔍 Parsed flight data:', JSON.stringify(flightData, null, 2));
-    
+
     // Check if Gemini returned a needsMoreInfo response
     if (flightData.needsMoreInfo) {
       console.error('🔍 Gemini detected missing information');
@@ -366,11 +374,11 @@ Return ONLY JSON.`;
         missingFields: flightData.missingFields || []
       };
     }
-    
+
     // Check for missing required fields in the new nested structure
     console.error('🔍 Checking for missing fields...');
     const missingFields = [];
-    
+
     // Check if we have the basic trip structure
     if (!flightData.trip) {
       missingFields.push('trip information');
@@ -397,17 +405,17 @@ Return ONLY JSON.`;
           }
         });
       }
-      
+
       // Check passenger information
       if (!flightData.trip.adults) missingFields.push('number of adults');
       if (!flightData.trip.travelClass) missingFields.push('travel class');
     }
-    
+
     console.error('🔍 Missing fields check complete. Found:', missingFields.length, 'missing fields');
-    
+
     if (missingFields.length > 0) {
       console.error('❌ Missing fields detected:', missingFields);
-      
+
       // Generate a user-friendly question about missing information
       let question = "I need a bit more information to search for your flight. ";
       if (missingFields.length === 1) {
@@ -417,7 +425,7 @@ Return ONLY JSON.`;
       } else {
         question += `Could you please provide more details about your flight? I'm missing: ${missingFields.slice(0, 3).join(', ')} and ${missingFields.length - 3} other details.`;
       }
-      
+
       return {
         needsMoreInfo: true,
         message: question,
@@ -425,20 +433,20 @@ Return ONLY JSON.`;
         flightData
       };
     }
-    
+
     console.error('✅ All required fields present, returning flight data');
     return {
       needsMoreInfo: false,
       flightData
     };
-    
-          } catch (error) {
-            console.error('❌ Error parsing flight request with Gemini:', error);
-            console.error('❌ Error details:', error.message);
-            console.error('❌ Error stack:', error.stack);
-            console.error('❌ Error type:', error.constructor.name);
-            console.error('❌ Error occurred at:', new Date().toISOString());
-    
+
+  } catch (error) {
+    console.error('❌ Error parsing flight request with Gemini:', error);
+    console.error('❌ Error details:', error.message);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Error type:', error.constructor.name);
+    console.error('❌ Error occurred at:', new Date().toISOString());
+
     const fallbackResult = fallbackParseFlightRequest(userRequest);
     if (fallbackResult) {
       console.error('🛟 Using fallback parser result:', JSON.stringify(fallbackResult, null, 2));
@@ -593,7 +601,7 @@ function sanitizeSubmitArgs(rawArgs) {
       }
       // Ensure plusDays present
       if (!Number.isFinite(seg.plusDays)) seg.plusDays = 0;
-      
+
       // Ensure times are in HH:MM:SS format (backend requires seconds)
       // If times are missing/empty, set to "00:00:00" as a fallback
       if (typeof seg.departureTime === 'string') {
@@ -605,7 +613,7 @@ function sanitizeSubmitArgs(rawArgs) {
       } else if (!seg.departureTime) {
         seg.departureTime = '00:00:00';
       }
-      
+
       if (typeof seg.arrivalTime === 'string') {
         if (seg.arrivalTime.length === 5) {
           seg.arrivalTime = seg.arrivalTime + ':00'; // "14:10" -> "14:10:00"
@@ -619,63 +627,177 @@ function sanitizeSubmitArgs(rawArgs) {
   }
 
   validateTripDates(args);
+  validateItineraryType(args);
 
   return args;
+}
+
+/**
+ * Validate that the itinerary type is supported by Navifare.
+ * Supported: Round-trip flights where return departs from the same airport where outbound arrived.
+ * NOT supported: One-way trips, open-jaw trips, multi-city trips.
+ */
+function validateItineraryType(args) {
+  if (!args?.trip?.legs?.length) {
+    throw new Error('Trip legs are required to search for flights.');
+  }
+
+  const legs = args.trip.legs;
+
+  // Check for one-way trips (only 1 leg)
+  if (legs.length === 1) {
+    throw new Error(
+      '🚫 One-way flights are not currently supported for price comparison. ' +
+      'We can only search for round-trip itineraries. ' +
+      'Please provide both outbound and return flight details to continue.'
+    );
+  }
+
+  // Check for multi-city trips (more than 2 legs)
+  if (legs.length > 2) {
+    throw new Error(
+      '🚫 Multi-city itineraries are not currently supported for price comparison. ' +
+      'We can only search for simple round-trip flights (one outbound journey + one return journey). ' +
+      'Please provide a standard round-trip itinerary to continue.'
+    );
+  }
+
+  // For round-trips (2 legs), check for open-jaw (return departs from different airport than outbound arrived)
+  if (legs.length === 2) {
+    const outboundLeg = legs[0];
+    const returnLeg = legs[1];
+
+    if (!outboundLeg?.segments?.length || !returnLeg?.segments?.length) {
+      return; // Will be caught by other validation
+    }
+
+    // Get the arrival airport of the last segment in the outbound leg
+    const outboundLastSegment = outboundLeg.segments[outboundLeg.segments.length - 1];
+    const outboundArrivalAirport = outboundLastSegment?.arrivalAirport?.toUpperCase();
+
+    // Get the departure airport of the first segment in the return leg
+    const returnFirstSegment = returnLeg.segments[0];
+    const returnDepartureAirport = returnFirstSegment?.departureAirport?.toUpperCase();
+
+    // Check if they match
+    if (outboundArrivalAirport && returnDepartureAirport && outboundArrivalAirport !== returnDepartureAirport) {
+      // Check if they might be airports in the same city (e.g., FCO vs CIA in Rome)
+      const cityAirportGroups = {
+        'ROM': ['FCO', 'CIA', 'ROM'],      // Rome
+        'MIL': ['MXP', 'LIN', 'BGY', 'MIL'], // Milan
+        'LON': ['LHR', 'LGW', 'STN', 'LTN', 'LCY', 'LON'], // London
+        'PAR': ['CDG', 'ORY', 'PAR'],      // Paris
+        'NYC': ['JFK', 'LGA', 'EWR', 'NYC'], // New York
+        'BUE': ['EZE', 'AEP', 'BUE'],      // Buenos Aires
+        'SAO': ['GRU', 'CGH', 'SAO'],      // Sao Paulo
+        'TYO': ['NRT', 'HND', 'TYO'],      // Tokyo
+        'SEL': ['ICN', 'GMP', 'SEL'],      // Seoul
+        'CHI': ['ORD', 'MDW', 'CHI'],      // Chicago
+      };
+
+      // Check if both airports are in the same city
+      let sameCity = false;
+      for (const [city, airports] of Object.entries(cityAirportGroups)) {
+        if (airports.includes(outboundArrivalAirport) && airports.includes(returnDepartureAirport)) {
+          sameCity = true;
+          console.error(`ℹ️ Detected same-city airports: ${outboundArrivalAirport} and ${returnDepartureAirport} are both in ${city}`);
+          break;
+        }
+      }
+
+      if (!sameCity) {
+        throw new Error(
+          `🚫 Open-jaw itineraries are not currently supported for price comparison. ` +
+          `Your outbound flight arrives at ${outboundArrivalAirport}, but your return flight departs from ${returnDepartureAirport}. ` +
+          `We can only search for round-trips where you return from the same airport you arrived at. ` +
+          `Please select a different flight option or adjust your itinerary.`
+        );
+      }
+    }
+
+    // Also verify that return arrives near where outbound departed (optional, less strict)
+    const outboundFirstSegment = outboundLeg.segments[0];
+    const outboundDepartureAirport = outboundFirstSegment?.departureAirport?.toUpperCase();
+
+    const returnLastSegment = returnLeg.segments[returnLeg.segments.length - 1];
+    const returnArrivalAirport = returnLastSegment?.arrivalAirport?.toUpperCase();
+
+    if (outboundDepartureAirport && returnArrivalAirport && outboundDepartureAirport !== returnArrivalAirport) {
+      // Check if they're in the same city
+      let sameCity = false;
+      for (const [city, airports] of Object.entries(cityAirportGroups)) {
+        if (airports.includes(outboundDepartureAirport) && airports.includes(returnArrivalAirport)) {
+          sameCity = true;
+          console.error(`ℹ️ Detected same-city return: departing from ${outboundDepartureAirport}, returning to ${returnArrivalAirport} (both in ${city})`);
+          break;
+        }
+      }
+
+      if (!sameCity) {
+        throw new Error(
+          `🚫 Open-jaw itineraries are not currently supported for price comparison. ` +
+          `Your outbound flight departs from ${outboundDepartureAirport}, but your return flight arrives at ${returnArrivalAirport}. ` +
+          `We can only search for round-trips where you return to the same airport you departed from. ` +
+          `Please select a different flight option or adjust your itinerary.`
+        );
+      }
+    }
+  }
 }
 
 // Helper function to split round trip segments in legs format (same logic as geminiService.ts)
 // Reuses the round trip detection pattern from the web app
 function splitRoundTripLegs(legs) {
   if (!legs || legs.length === 0) return legs;
-  
+
   // Check each leg for round trip patterns
   const normalizedLegs = [];
-  
+
   for (const leg of legs) {
     if (!leg.segments || leg.segments.length < 2) {
       // Single segment or no segments - keep as-is
       normalizedLegs.push(leg);
       continue;
     }
-    
+
     const segments = leg.segments;
     const firstSegment = segments[0];
-    
+
     // Need departureAirport/arrivalAirport (API format) or departure/arrival (extracted format)
     const origin = firstSegment.departureAirport || firstSegment.departure;
-    
+
     if (!origin) {
       // Can't determine origin, keep as-is
       normalizedLegs.push(leg);
       continue;
     }
-    
+
     // Check if any segment returns to origin (round trip pattern)
     // This matches the logic from geminiService.ts: detectRoundTripPattern + segment splitting
     let foundReturn = false;
     for (let i = 1; i < segments.length; i++) {
       const segment = segments[i];
       const arrival = segment.arrivalAirport || segment.arrival;
-      
+
       if (arrival && arrival.toUpperCase() === origin.toUpperCase()) {
         // Found return flight - split segments (same logic as geminiService.ts lines 690-697)
         console.error(`🔄 Splitting round trip: first ${i} segments are outbound, remaining are return`);
         const outboundSegments = segments.slice(0, i);
         const returnSegments = segments.slice(i);
-        
+
         normalizedLegs.push({ segments: outboundSegments });
         normalizedLegs.push({ segments: returnSegments });
         foundReturn = true;
         break;
       }
     }
-    
+
     if (!foundReturn) {
       // No round trip pattern detected, keep leg as-is
       normalizedLegs.push(leg);
     }
   }
-  
+
   return normalizedLegs;
 }
 
@@ -684,7 +806,7 @@ function transformToApiFormat(flightData) {
   if (flightData.trip && flightData.trip.legs) {
     // Reuse the round trip splitting logic (same pattern as geminiService.ts)
     const normalizedLegs = splitRoundTripLegs(flightData.trip.legs);
-    
+
     if (normalizedLegs.length !== flightData.trip.legs.length) {
       // Legs were split, return normalized structure
       return {
@@ -695,10 +817,10 @@ function transformToApiFormat(flightData) {
         }
       };
     }
-    
+
     return flightData;
   }
-  
+
   // Otherwise, transform the old format to the new format
   return {
     trip: {
@@ -751,18 +873,18 @@ async function optimizeImagesForGemini(images) {
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
-    
+
     // Clean the base64 data thoroughly before processing
     let data = img.data || '';
-    
+
     // Remove data URI prefix if present
     if (data.startsWith('data:image/')) {
       data = data.split(',')[1] || data;
     }
-    
+
     // Remove ALL whitespace (spaces, newlines, tabs, etc.)
     data = data.replace(/\s/g, '');
-    
+
     // Validate that we have actual data
     if (!data || data.length < 100) {
       console.error(`❌ Image ${i} has invalid or too short base64 data (${data.length} chars)`);
@@ -772,7 +894,7 @@ async function optimizeImagesForGemini(images) {
     try {
       // Validate base64 before decoding
       const decoded = Buffer.from(data, 'base64');
-      
+
       // Verify the decoded buffer is valid
       if (decoded.length === 0) {
         throw new Error('Decoded buffer is empty');
@@ -823,12 +945,12 @@ async function optimizeImagesForGemini(images) {
           .toBuffer();
 
         const finalBase64 = emergencyBuffer.toString('base64');
-        
+
         // Verify the base64 string is complete (not truncated)
         if (!finalBase64 || finalBase64.length < 100) {
           throw new Error(`Emergency optimized base64 is too short (${finalBase64?.length || 0} chars)`);
         }
-        
+
         optimizedImages.push({
           data: finalBase64,
           mimeType: 'image/jpeg'
@@ -838,7 +960,7 @@ async function optimizeImagesForGemini(images) {
         if (!optimizedBase64 || optimizedBase64.length < 100) {
           throw new Error(`Optimized base64 is too short (${optimizedBase64?.length || 0} chars)`);
         }
-        
+
         optimizedImages.push({
           data: optimizedBase64,
           mimeType: 'image/jpeg'
@@ -847,19 +969,19 @@ async function optimizeImagesForGemini(images) {
 
     } catch (error) {
       console.error(`❌ Failed to optimize image ${i}:`, error.message);
-      
+
       // If optimization fails, try with original (but ensure it's clean)
       let fallbackData = data;
       if (fallbackData.startsWith('data:image/')) {
         fallbackData = fallbackData.split(',')[1] || fallbackData;
       }
       fallbackData = fallbackData.replace(/\s/g, '');
-      
+
       // Validate fallback data
       if (!fallbackData || fallbackData.length < 100) {
         throw new Error(`Cannot process image ${i}: optimization failed and original data is invalid`);
       }
-      
+
       optimizedImages.push({
         data: fallbackData,
         mimeType: img.mimeType || 'image/jpeg'
@@ -885,7 +1007,7 @@ async function extractFlightDetailsFromImages(images) {
   }
   console.error('✅ Gemini API key found, length:', process.env.GEMINI_API_KEY.length);
 
-  const model = getGeminiAI().getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = getGeminiAI().getGenerativeModel({ model: AI_MODEL });
 
   // Get current date context
   const currentYear = new Date().getFullYear();
@@ -916,20 +1038,20 @@ async function extractFlightDetailsFromImages(images) {
   const imageParts = optimizedImages.map((img, index) => {
     // Clean the base64 data thoroughly
     let cleanedData = img.data || '';
-    
+
     // Validate we have data
     if (!cleanedData) {
       throw new Error(`Image ${index} has no data property`);
     }
-    
+
     // Remove data URI prefix if present
     if (cleanedData.startsWith('data:image/')) {
       cleanedData = cleanedData.split(',')[1] || cleanedData;
     }
-    
+
     // Remove ALL whitespace (spaces, newlines, tabs, etc.)
     cleanedData = cleanedData.replace(/\s/g, '');
-    
+
     // Validate base64 data is not empty and has minimum length
     if (!cleanedData || cleanedData.length < 100) {
       console.error(`❌ Image ${index} has invalid base64 data (length: ${cleanedData?.length || 0})`);
@@ -942,7 +1064,7 @@ async function extractFlightDetailsFromImages(images) {
       console.error(`❌ Image ${index} contains invalid base64 characters`);
       throw new Error(`Image ${index} contains invalid base64 characters`);
     }
-    
+
     // Validate base64 can be decoded and represents a valid image
     let imageBuffer;
     try {
@@ -959,13 +1081,13 @@ async function extractFlightDetailsFromImages(images) {
     // Check for PNG header: 89 50 4E 47 0D 0A 1A 0A
     // Check for JPEG header: FF D8 FF
     // Check for WebP header: RIFF ... WEBP
-    const isPNG = imageBuffer.length >= 8 && 
-      imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50 && 
+    const isPNG = imageBuffer.length >= 8 &&
+      imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50 &&
       imageBuffer[2] === 0x4E && imageBuffer[3] === 0x47;
-    
-    const isJPEG = imageBuffer.length >= 3 && 
+
+    const isJPEG = imageBuffer.length >= 3 &&
       imageBuffer[0] === 0xFF && imageBuffer[1] === 0xD8 && imageBuffer[2] === 0xFF;
-    
+
     const isWebP = imageBuffer.length >= 12 &&
       imageBuffer.slice(0, 4).toString() === 'RIFF' &&
       imageBuffer.slice(8, 12).toString() === 'WEBP';
@@ -974,16 +1096,16 @@ async function extractFlightDetailsFromImages(images) {
       // Check if the base64 might be truncated by looking at the size
       // Truncated base64 might decode but not have valid image headers
       const looksTruncated = imageBuffer.length < 1000; // Suspiciously small for an image
-      
+
       if (looksTruncated) {
         console.error(`❌ Image ${index} appears to be truncated (only ${imageBuffer.length} bytes)`);
         throw new Error(`Image ${index} appears to be truncated or incomplete. The base64 data is too short (${imageBuffer.length} bytes) or does not contain a valid image header. Please ensure the full image data is provided.`);
       }
-      
+
       console.error(`❌ Image ${index} does not match any known image format (PNG, JPEG, or WebP)`);
       throw new Error(`Image ${index} does not appear to be a valid image format (PNG, JPEG, or WebP). The decoded data does not match any known image format headers.`);
     }
-    
+
     return {
       inlineData: {
         data: cleanedData,
@@ -991,7 +1113,7 @@ async function extractFlightDetailsFromImages(images) {
       }
     };
   });
-  
+
   // Check total payload size (all images combined)
   const totalImageSize = images.reduce((sum, img) => {
     const data = img.data.replace(/^data:image\/[^;]+;base64,/, '').replace(/\s/g, '');
@@ -1008,7 +1130,7 @@ async function extractFlightDetailsFromImages(images) {
   }
 
   // Use the currentYear and currentDate already declared above
-  
+
   const prompt = `Analyze this flight booking screenshot and return ONLY a valid JSON object in the exact structure below:
 
 {
@@ -1078,7 +1200,7 @@ SEGMENT CLASSIFICATION RULES:
 - If you see "Flight to Athens" and "Flight to London" on the same booking → it's round_trip
 - Use labels (Outbound, Return, Andata e ritorno, Aller et retour…), logical flow, and airport matching
 Airline: prefer two-letter code near flight number, else full name; if unclear → JSON null (NOT the string "null").
-Flight number: extract the COMPLETE flight number including airline prefix (e.g., "DY816" from Norwegian DY816, "U2123" from United Express U2123, "W46011" from Wizz Air Malta W46011). Include any letters or digits that appear before the numeric part. Examples: "BA553" → "BA553", "DY816" → "DY816", "U2123" → "U2123", "FR100" → "FR100". If unclear → JSON null (NOT the string "null").
+Flight number: extract ONLY the numeric part, excluding the airline prefix (e.g., "816" from Norwegian DY816, "3811" from easyJet U2 3811, "553" from BA553). CRITICAL: Flight numbers can be 1-4 digits long. When you see a space between the airline code and numbers (e.g., "U2 3811"), extract ONLY the numeric part: "U2 3811" becomes "3811" (NOT "U23811" or "U2 2"). The airline prefix (2 letters like "U2", "BA", "DY") should NOT be included. Examples: "BA553" → "553", "DY816" → "816", "U2 3811" → "3811", "LX 1612" → "1612", "FR100" → "100", "W46011" → "6011". Always extract the complete numeric portion - do not truncate or shorten flight numbers. If unclear → JSON null (NOT the string "null").
 Airports: 3-letter IATA; if unclear → JSON null (NOT the string "null").
 Times: 24-hour HH:MM format. CRITICAL TIME EXTRACTION RULES:
 - ALWAYS look for and respect AM/PM indicators in the screenshot
@@ -1157,49 +1279,49 @@ Return ONLY the JSON object, no extra text.`;
     const text = result.response.text() || '';
     console.error('📥 Received response from Gemini API, length:', text.length);
     console.error('📥 Response preview:', text.substring(0, 200) + '...');
-    
+
     // Try to parse the JSON response
     try {
       const cleanedText = text.replace(/```json\n?|\n?```/g, '').trim();
       console.error('🧹 Cleaned response text');
-      
+
       // Check if the response contains flight-related content
       if (!cleanedText.includes('tripType') && !cleanedText.includes('outboundSegments')) {
         return {
           error: 'No flight details found in the image(s). Please upload a flight booking screenshot or itinerary.'
         };
       }
-      
+
       let parsed = JSON.parse(cleanedText);
       console.error('✅ Successfully parsed JSON');
-      
+
       // Apply post-processing functions (reused from geminiService.ts)
       // 1. Convert airline names to IATA codes
       parsed = convertAirlineNamesToIataCodes(parsed);
       console.error('🔄 Converted airline names to IATA codes');
-      
+
       // 2. Normalize dates to resolve missing years and avoid past dates
       parsed = fixPastDates(parsed, currentYear, currentDate);
       console.error('🔄 Normalized dates');
-      
+
       // 3. Detect round trip pattern if segments form A → B → A
       const isRoundTripPattern = detectRoundTripPattern(
         parsed.outboundSegments || [],
         parsed.returnSegments || []
       );
-      
+
       if (isRoundTripPattern && parsed.tripType !== 'round_trip') {
         console.error('🔄 Detected A → B → A pattern, forcing round_trip');
         parsed.tripType = 'round_trip';
-        
+
         // If round-trip was detected but returnSegments is empty, check if both flights are in outboundSegments
         // and split them appropriately
         if ((!parsed.returnSegments || parsed.returnSegments.length === 0) &&
-            parsed.outboundSegments && parsed.outboundSegments.length >= 2) {
+          parsed.outboundSegments && parsed.outboundSegments.length >= 2) {
           const outbound = parsed.outboundSegments;
           const firstFlight = outbound[0];
           const origin = firstFlight.departure;
-          
+
           // Check if any segment returns to origin
           for (let i = 1; i < outbound.length; i++) {
             if (outbound[i].arrival === origin) {
@@ -1212,7 +1334,7 @@ Return ONLY the JSON object, no extra text.`;
           }
         }
       }
-      
+
       console.error('✅ Post-processing completed');
       return parsed;
     } catch (parseError) {
@@ -1243,7 +1365,7 @@ Return ONLY the JSON object, no extra text.`;
         error: 'The image could not be processed by Gemini. The image data may be corrupted, truncated, or in an unsupported format. Please ensure the image is a valid PNG, JPEG, or WebP file and try again. If the problem persists, the image may be too large or corrupted.',
         extractedData: {
           error: 'Failed to analyze images: Unable to process input image',
-          details: '[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent: [400 Bad Request] Unable to process input image. Please retry or report in https://developers.generativeai.google/guide/troubleshooting'
+          details: '[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent: [400 Bad Request] Unable to process input image. Please retry or report in https://developers.generativeai.google/guide/troubleshooting'
         }
       };
     }
@@ -1301,9 +1423,18 @@ function fixPastDates(data, currentYear, currentDateISO) {
     if (isoMatch) {
       const [, yearStr, mm, dd] = isoMatch;
       const yearNum = parseInt(yearStr, 10);
-      if (yearNum < currentYear) {
-        console.error(`🔄 Fixing past year in date: ${trimmed} → ${currentYear}-${mm}-${dd}`);
-        return `${currentYear}-${mm}-${dd}`;
+      const monthNum = parseInt(mm, 10);
+      const dayNum = parseInt(dd, 10);
+      
+      // Check if the date is in the past
+      const dateToCheck = new Date(yearNum, monthNum - 1, dayNum);
+      const isPastDate = dateToCheck < today;
+      
+      if (yearNum < currentYear || isPastDate) {
+        // If year is in the past OR the date itself is in the past, move to next year
+        const nextYear = yearNum < currentYear ? currentYear : currentYear + 1;
+        console.error(`🔄 Fixing past date: ${trimmed} → ${nextYear}-${mm}-${dd}`);
+        return `${nextYear}-${mm}-${dd}`;
       }
       return trimmed;
     }
@@ -1404,7 +1535,7 @@ function detectRoundTripPattern(outboundSegments, returnSegments) {
 // Converts common airline names to IATA codes (simplified version without full airline lookup)
 function convertAirlineNameToIataCode(airlineName) {
   if (!airlineName) return '';
-  
+
   // If already a 2-3 letter code, return uppercase
   if ((airlineName.length === 2 || airlineName.length === 3) && /^[A-Z]{2,3}$/i.test(airlineName)) {
     return airlineName.toUpperCase();
@@ -1442,7 +1573,7 @@ function convertAirlineNameToIataCode(airlineName) {
   };
 
   const normalized = airlineName.toLowerCase().trim();
-  
+
   // Direct match
   if (airlineMap[normalized]) {
     return airlineMap[normalized];
@@ -1466,24 +1597,24 @@ function extractAirlineCodeFromFlightNumber(flightNumber) {
   if (!flightNumber || typeof flightNumber !== 'string') {
     return null;
   }
-  
+
   // Normalize: remove spaces, dashes, convert to uppercase
   const normalized = flightNumber.replace(/[\s-]/g, '').toUpperCase().trim();
-  
+
   if (normalized.length < 2) {
     return null;
   }
-  
+
   // Extract first 2 characters
   const firstTwo = normalized.substring(0, 2);
-  
+
   // Check if at least one character is a letter
   const hasLetter = /[A-Z]/.test(firstTwo);
-  
+
   if (!hasLetter) {
     return null;
   }
-  
+
   // Return the 2-character code
   return firstTwo;
 }
@@ -1493,10 +1624,10 @@ function cleanFlightNumber(flightNumber) {
   if (!flightNumber || typeof flightNumber !== 'string') {
     return '';
   }
-  
+
   // Normalize: remove spaces, dashes, convert to uppercase
   const normalized = flightNumber.replace(/[\s-]/g, '').toUpperCase().trim();
-  
+
   // Extract numeric part (everything after the airline code prefix)
   // Match pattern: 2-3 letters followed by numbers
   const match = normalized.match(/^[A-Z]{2,3}(\d+)$/);
@@ -1505,47 +1636,53 @@ function cleanFlightNumber(flightNumber) {
     // Strip leading zeros but keep at least one digit
     return numericPart.replace(/^0+/, '') || '0';
   }
-  
+
   // Fallback: extract all digits if no letter prefix found
   const allDigits = normalized.replace(/\D/g, '');
   if (allDigits) {
     return allDigits.replace(/^0+/, '') || '0';
   }
-  
+
   return '';
 }
 
 // Helper function to convert airline names to IATA codes in extracted data
-// Uses Phase 1 extraction from flight number first, then falls back to airline name lookup
+// Prioritizes airline name lookup, with regex extraction from flight number as fallback
 function convertAirlineNamesToIataCodes(data) {
   console.error('🔧 Converting airline names to IATA codes...');
 
   // Process outbound segments
   if (data.outboundSegments && Array.isArray(data.outboundSegments)) {
     data.outboundSegments = data.outboundSegments.map((segment, index) => {
-      // Phase 1: Try to extract airline code from flight number
+      // Primary: Extract airline code from airline name field
       let iataCode = null;
-      let cleanedFlightNumber = segment.flightNumber;
-      
-      if (segment.flightNumber) {
-        iataCode = extractAirlineCodeFromFlightNumber(segment.flightNumber);
-        if (iataCode) {
-          console.error(`  ✈️ Outbound ${index + 1}: Phase 1 - Extracted "${iataCode}" from flight number "${segment.flightNumber}"`);
-          // Clean the flight number by removing the airline prefix
-          cleanedFlightNumber = cleanFlightNumber(segment.flightNumber);
-          if (cleanedFlightNumber !== segment.flightNumber) {
-            console.error(`  ✈️ Outbound ${index + 1}: Cleaned flight number "${segment.flightNumber}" -> "${cleanedFlightNumber}"`);
-          }
-        }
-      }
-      
-      // Phase 2: Fallback to airline name lookup if Phase 1 didn't work
-      if (!iataCode && segment.airline && segment.airline !== 'null' && segment.airline !== 'undefined' && segment.airline !== 'N/A') {
+      if (segment.airline && segment.airline !== 'null' && segment.airline !== 'undefined' && segment.airline !== 'N/A') {
         const originalAirline = segment.airline;
         iataCode = convertAirlineNameToIataCode(segment.airline);
-        console.error(`  ✈️ Outbound ${index + 1}: Phase 2 - Converted "${originalAirline}" -> "${iataCode}"`);
+        if (iataCode) {
+          console.error(`  ✈️ Outbound ${index + 1}: Converted airline name "${originalAirline}" -> "${iataCode}"`);
+        }
       }
-      
+
+      // Fallback: Try to extract from flight number (if airline name lookup failed)
+      // Note: This is a fallback since flight numbers are now numeric-only
+      if (!iataCode && segment.flightNumber) {
+        const extractedCode = extractAirlineCodeFromFlightNumber(segment.flightNumber);
+        if (extractedCode) {
+          console.error(`  ⚠️ Outbound ${index + 1}: Fallback - Extracted "${extractedCode}" from flight number "${segment.flightNumber}" (this shouldn't happen with numeric-only extraction)`);
+          iataCode = extractedCode;
+        }
+      }
+
+      // Clean flight number (should already be numeric-only, but handle edge cases)
+      let cleanedFlightNumber = segment.flightNumber;
+      if (segment.flightNumber) {
+        cleanedFlightNumber = cleanFlightNumber(segment.flightNumber);
+        if (cleanedFlightNumber !== segment.flightNumber) {
+          console.error(`  ✈️ Outbound ${index + 1}: Cleaned flight number "${segment.flightNumber}" -> "${cleanedFlightNumber}"`);
+        }
+      }
+
       return {
         ...segment,
         airline: iataCode || '',
@@ -1557,29 +1694,35 @@ function convertAirlineNamesToIataCodes(data) {
   // Process return segments
   if (data.returnSegments && Array.isArray(data.returnSegments)) {
     data.returnSegments = data.returnSegments.map((segment, index) => {
-      // Phase 1: Try to extract airline code from flight number
+      // Primary: Extract airline code from airline name field
       let iataCode = null;
-      let cleanedFlightNumber = segment.flightNumber;
-      
-      if (segment.flightNumber) {
-        iataCode = extractAirlineCodeFromFlightNumber(segment.flightNumber);
-        if (iataCode) {
-          console.error(`  ✈️ Return ${index + 1}: Phase 1 - Extracted "${iataCode}" from flight number "${segment.flightNumber}"`);
-          // Clean the flight number by removing the airline prefix
-          cleanedFlightNumber = cleanFlightNumber(segment.flightNumber);
-          if (cleanedFlightNumber !== segment.flightNumber) {
-            console.error(`  ✈️ Return ${index + 1}: Cleaned flight number "${segment.flightNumber}" -> "${cleanedFlightNumber}"`);
-          }
-        }
-      }
-      
-      // Phase 2: Fallback to airline name lookup if Phase 1 didn't work
-      if (!iataCode && segment.airline && segment.airline !== 'null' && segment.airline !== 'undefined' && segment.airline !== 'N/A') {
+      if (segment.airline && segment.airline !== 'null' && segment.airline !== 'undefined' && segment.airline !== 'N/A') {
         const originalAirline = segment.airline;
         iataCode = convertAirlineNameToIataCode(segment.airline);
-        console.error(`  ✈️ Return ${index + 1}: Phase 2 - Converted "${originalAirline}" -> "${iataCode}"`);
+        if (iataCode) {
+          console.error(`  ✈️ Return ${index + 1}: Converted airline name "${originalAirline}" -> "${iataCode}"`);
+        }
       }
-      
+
+      // Fallback: Try to extract from flight number (if airline name lookup failed)
+      // Note: This is a fallback since flight numbers are now numeric-only
+      if (!iataCode && segment.flightNumber) {
+        const extractedCode = extractAirlineCodeFromFlightNumber(segment.flightNumber);
+        if (extractedCode) {
+          console.error(`  ⚠️ Return ${index + 1}: Fallback - Extracted "${extractedCode}" from flight number "${segment.flightNumber}" (this shouldn't happen with numeric-only extraction)`);
+          iataCode = extractedCode;
+        }
+      }
+
+      // Clean flight number (should already be numeric-only, but handle edge cases)
+      let cleanedFlightNumber = segment.flightNumber;
+      if (segment.flightNumber) {
+        cleanedFlightNumber = cleanFlightNumber(segment.flightNumber);
+        if (cleanedFlightNumber !== segment.flightNumber) {
+          console.error(`  ✈️ Return ${index + 1}: Cleaned flight number "${segment.flightNumber}" -> "${cleanedFlightNumber}"`);
+        }
+      }
+
       return {
         ...segment,
         airline: iataCode || '',
@@ -1614,19 +1757,19 @@ function isExtractedDataComplete(extractedData) {
     currency: extractedData?.currency,
     currencyIsNull: extractedData?.currency === null
   });
-  
+
   // Check if we have basic structure
   if (!extractedData) {
     console.error('❌ isExtractedDataComplete: Missing extractedData object');
     return false;
   }
-  
+
   // Check outbound segments
   if (!extractedData.outboundSegments || !Array.isArray(extractedData.outboundSegments) || extractedData.outboundSegments.length === 0) {
     console.error('❌ isExtractedDataComplete: Missing or empty outboundSegments');
     return false;
   }
-  
+
   // Check each outbound segment for required fields
   for (const segment of extractedData.outboundSegments) {
     if (!segment.airline || segment.airline === null) {
@@ -1658,14 +1801,14 @@ function isExtractedDataComplete(extractedData) {
       return false;
     }
   }
-  
+
   // Check return segments (for round trips)
   if (extractedData.tripType === 'round_trip') {
     if (!extractedData.returnSegments || !Array.isArray(extractedData.returnSegments) || extractedData.returnSegments.length === 0) {
       console.error('❌ isExtractedDataComplete: Missing or empty returnSegments for round trip');
       return false;
     }
-    
+
     for (const segment of extractedData.returnSegments) {
       if (!segment.airline || segment.airline === null) {
         console.error('❌ isExtractedDataComplete: Missing airline in return segment');
@@ -1697,7 +1840,7 @@ function isExtractedDataComplete(extractedData) {
       }
     }
   }
-  
+
   // Check passenger information (must have at least adults count)
   if (!extractedData.passengers || extractedData.passengers.adults === null || extractedData.passengers.adults === undefined) {
     console.error('❌ isExtractedDataComplete: Missing passengers or adults count');
@@ -1705,13 +1848,13 @@ function isExtractedDataComplete(extractedData) {
     console.error('❌ isExtractedDataComplete: passengers.adults:', extractedData.passengers?.adults);
     return false;
   }
-  
+
   // Check cabin class
   if (!extractedData.cabinClass || extractedData.cabinClass === null) {
     console.error('❌ isExtractedDataComplete: Missing cabinClass');
     return false;
   }
-  
+
   // Check price and currency (required for price comparison)
   if (extractedData.totalPrice === null || extractedData.totalPrice === undefined) {
     console.error('❌ isExtractedDataComplete: Missing totalPrice');
@@ -1719,13 +1862,13 @@ function isExtractedDataComplete(extractedData) {
     console.error('❌ isExtractedDataComplete: totalPrice type:', typeof extractedData.totalPrice);
     return false;
   }
-  
+
   if (!extractedData.currency || extractedData.currency === null) {
     console.error('❌ isExtractedDataComplete: Missing currency');
     console.error('❌ isExtractedDataComplete: currency value:', extractedData.currency);
     return false;
   }
-  
+
   console.error('✅ isExtractedDataComplete: All checks passed - data is COMPLETE');
   return true;
 }
@@ -1747,7 +1890,7 @@ function transformExtractedToFlightData(extractedData) {
     currency: extractedData.currency || 'EUR',
     location: 'IT' // Default location
   };
-  
+
   // Transform outbound segments
   if (extractedData.outboundSegments && extractedData.outboundSegments.length > 0) {
     transformedData.trip.legs.push({
@@ -1763,7 +1906,7 @@ function transformExtractedToFlightData(extractedData) {
       }))
     });
   }
-  
+
   // Transform return segments
   if (extractedData.returnSegments && extractedData.returnSegments.length > 0) {
     transformedData.trip.legs.push({
@@ -1779,7 +1922,7 @@ function transformExtractedToFlightData(extractedData) {
       }))
     });
   }
-  
+
   return transformedData;
 }
 
@@ -1792,21 +1935,21 @@ let inputBuffer = '';
 process.stdin.on('data', async (data) => {
   // Append new data to buffer
   inputBuffer += data;
-  
+
   // Process complete messages (separated by newlines)
   const lines = inputBuffer.split('\n');
   // Keep the last (potentially incomplete) line in the buffer
   inputBuffer = lines.pop() || '';
-  
+
   // Process each complete line
   for (const line of lines) {
     if (!line.trim()) continue; // Skip empty lines
-    
+
     let request;
     try {
       request = JSON.parse(line.trim());
       console.error('✅ JSON parsed successfully, method:', request.method);
-      
+
       if (request.method === 'initialize') {
         const response = {
           jsonrpc: '2.0',
@@ -1829,175 +1972,175 @@ process.stdin.on('data', async (data) => {
           id: request.id,
           result: {
             tools: [
-            {
-              name: 'flight_pricecheck',
-              title: 'Flight Price Check',
-              description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
-              readOnlyHint: false,
-              destructiveHint: false,
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  trip: {
-                    type: 'object',
-                    description: 'Flight trip details including segments, passengers, and travel class',
-                    properties: {
-                      legs: {
-                        type: 'array',
-                        description: 'Array of flight legs (one for outbound, one for return in round trips)',
-                        items: {
-                          type: 'object',
-                          properties: {
-                            segments: {
-                              type: 'array',
-                              description: 'Array of flight segments within this leg',
-                              items: {
-                                type: 'object',
-                                properties: {
-                                  airline: { type: 'string', description: 'Two-letter IATA airline code (e.g., "LX", "AZ", "BA")' },
-                                  flightNumber: { type: 'string', description: 'Numeric flight number without airline prefix (e.g., "1612", "573")' },
-                                  departureAirport: { type: 'string', description: 'Three-letter IATA departure airport code (e.g., "ZRH", "MXP")' },
-                                  arrivalAirport: { type: 'string', description: 'Three-letter IATA arrival airport code (e.g., "LHR", "FCO")' },
-                                  departureDate: { type: 'string', description: 'Departure date in YYYY-MM-DD format (e.g., "2025-12-16")' },
-                                  departureTime: { type: 'string', description: 'Departure time in HH:MM or HH:MM:SS format (e.g., "07:10" or "07:10:00")' },
-                                  arrivalTime: { type: 'string', description: 'Arrival time in HH:MM or HH:MM:SS format (e.g., "08:25" or "08:25:00")' },
-                                  plusDays: { type: 'number', description: 'Days to add to arrival date if arrival is next day (0 for same day, 1 for next day)' }
-                                },
-                                required: ['airline', 'flightNumber', 'departureAirport', 'arrivalAirport', 'departureDate', 'departureTime', 'arrivalTime', 'plusDays']
+              {
+                name: 'flight_pricecheck',
+                title: 'Flight Price Check',
+                description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
+                readOnlyHint: false,
+                destructiveHint: false,
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    trip: {
+                      type: 'object',
+                      description: 'Flight trip details including segments, passengers, and travel class',
+                      properties: {
+                        legs: {
+                          type: 'array',
+                          description: 'Array of flight legs (one for outbound, one for return in round trips)',
+                          items: {
+                            type: 'object',
+                            properties: {
+                              segments: {
+                                type: 'array',
+                                description: 'Array of flight segments within this leg',
+                                items: {
+                                  type: 'object',
+                                  properties: {
+                                    airline: { type: 'string', description: 'Two-letter IATA airline code (e.g., "LX", "AZ", "BA")' },
+                                    flightNumber: { type: 'string', description: 'Numeric flight number without airline prefix (e.g., "1612", "573")' },
+                                    departureAirport: { type: 'string', description: 'Three-letter IATA departure airport code (e.g., "ZRH", "MXP")' },
+                                    arrivalAirport: { type: 'string', description: 'Three-letter IATA arrival airport code (e.g., "LHR", "FCO")' },
+                                    departureDate: { type: 'string', description: 'Departure date in YYYY-MM-DD format (e.g., "2025-12-16")' },
+                                    departureTime: { type: 'string', description: 'Departure time in HH:MM or HH:MM:SS format (e.g., "07:10" or "07:10:00")' },
+                                    arrivalTime: { type: 'string', description: 'Arrival time in HH:MM or HH:MM:SS format (e.g., "08:25" or "08:25:00")' },
+                                    plusDays: { type: 'number', description: 'Days to add to arrival date if arrival is next day (0 for same day, 1 for next day)' }
+                                  },
+                                  required: ['airline', 'flightNumber', 'departureAirport', 'arrivalAirport', 'departureDate', 'departureTime', 'arrivalTime', 'plusDays']
+                                }
                               }
-                            }
-                          },
-                          required: ['segments']
-                        }
+                            },
+                            required: ['segments']
+                          }
+                        },
+                        travelClass: { type: 'string', description: 'Travel class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST', enum: ['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'] },
+                        adults: { type: 'number', description: 'Number of adult passengers', minimum: 1 },
+                        children: { type: 'number', description: 'Number of child passengers', minimum: 0 },
+                        infantsInSeat: { type: 'number', description: 'Number of infants requiring a seat', minimum: 0 },
+                        infantsOnLap: { type: 'number', description: 'Number of infants on lap', minimum: 0 }
                       },
-                      travelClass: { type: 'string', description: 'Travel class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST', enum: ['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'] },
-                      adults: { type: 'number', description: 'Number of adult passengers', minimum: 1 },
-                      children: { type: 'number', description: 'Number of child passengers', minimum: 0 },
-                      infantsInSeat: { type: 'number', description: 'Number of infants requiring a seat', minimum: 0 },
-                      infantsOnLap: { type: 'number', description: 'Number of infants on lap', minimum: 0 }
+                      required: ['legs', 'travelClass', 'adults', 'children', 'infantsInSeat', 'infantsOnLap']
                     },
-                    required: ['legs', 'travelClass', 'adults', 'children', 'infantsInSeat', 'infantsOnLap']
+                    source: { type: 'string', description: 'Source identifier for the original price (e.g., "ChatGPT", "User", "Booking.com")' },
+                    price: { type: 'string', description: 'Reference price found by the user (e.g., "84.00", "200.50")' },
+                    currency: { type: 'string', description: 'Three-letter ISO currency code (e.g., "EUR", "USD", "GBP")', pattern: '^[A-Z]{3}$' },
+                    location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "ES", "IT", "US"). If unsure, default to "ZZ" ', pattern: '^[A-Z]{2}$', default: 'ZZ' }
                   },
-                  source: { type: 'string', description: 'Source identifier for the original price (e.g., "ChatGPT", "User", "Booking.com")' },
-                  price: { type: 'string', description: 'Reference price found by the user (e.g., "84.00", "200.50")' },
-                  currency: { type: 'string', description: 'Three-letter ISO currency code (e.g., "EUR", "USD", "GBP")', pattern: '^[A-Z]{3}$' },
-                  location: { type: 'string', description: 'Two-letter ISO country code for user location (e.g., "ES", "IT", "US"). If unsure, default to "ZZ" ', pattern: '^[A-Z]{2}$', default: 'ZZ' }
+                  required: ['trip', 'source', 'price', 'currency']
                 },
-                required: ['trip', 'source', 'price', 'currency']
-              },
-              outputSchema: {
-                type: 'object',
-                description: 'Flight price comparison results',
-                properties: {
-                  message: { type: 'string', description: 'Summary message about the search results' },
-                  searchResult: {
-                    type: 'object',
-                    description: 'Detailed search results',
-                    properties: {
-                      request_id: { type: 'string', description: 'Unique identifier for this search request' },
-                      status: { type: 'string', description: 'Search status: IN_PROGRESS, COMPLETED, or FAILED' },
-                      totalResults: { type: 'number', description: 'Total number of price comparison results found' },
-                      results: {
-                        type: 'array',
-                        description: 'Array of price comparison results',
-                        items: {
-                          type: 'object',
-                          properties: {
-                            rank: { type: 'number', description: 'Ranking of this result' },
-                            price: { type: 'string', description: 'Price with currency (e.g., "84.00 EUR")' },
-                            website: { type: 'string', description: 'Booking website name' },
-                            bookingUrl: { type: 'string', description: 'URL to book this flight' },
-                            fareType: { type: 'string', description: 'Type of fare (Standard Fare or Special Fare)' }
+                outputSchema: {
+                  type: 'object',
+                  description: 'Flight price comparison results',
+                  properties: {
+                    message: { type: 'string', description: 'Summary message about the search results' },
+                    searchResult: {
+                      type: 'object',
+                      description: 'Detailed search results',
+                      properties: {
+                        request_id: { type: 'string', description: 'Unique identifier for this search request' },
+                        status: { type: 'string', description: 'Search status: IN_PROGRESS, COMPLETED, or FAILED' },
+                        totalResults: { type: 'number', description: 'Total number of price comparison results found' },
+                        results: {
+                          type: 'array',
+                          description: 'Array of price comparison results',
+                          items: {
+                            type: 'object',
+                            properties: {
+                              rank: { type: 'number', description: 'Ranking of this result' },
+                              price: { type: 'string', description: 'Price with currency (e.g., "84.00 EUR")' },
+                              website: { type: 'string', description: 'Booking website name' },
+                              bookingUrl: { type: 'string', description: 'URL to book this flight' },
+                              fareType: { type: 'string', description: 'Type of fare (Standard Fare or Special Fare)' }
+                            }
                           }
                         }
                       }
-                    }
-                  },
-                  status: { type: 'string', description: 'Overall status of the search' }
-                }
-              }
-            },
-            // DEACTIVATED: Image extraction tool (commented out but kept for future use)
-            /*
-            {
-              name: 'extract_flight_from_image',
-              description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. ⚠️ CRITICAL: Images MUST be provided as base64-encoded strings. File IDs, file paths, or URLs will NOT work and will cause the tool to fail. You MUST convert images to base64 encoding before calling this tool.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  images: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        data: {
-                          type: 'string',
-                          description: '⚠️ CRITICAL REQUIREMENT: Image data MUST be a base64-encoded string. NO OTHER FORMAT WILL WORK. Do NOT send file IDs (like "file_000000009ca4720aaf20f16309d0c674"), file paths (like "/mnt/data/image.png"), or URLs. These will be rejected and the tool will fail. Format: Provide ONLY the raw base64 string without any data URI prefix. Example CORRECT: "iVBORw0KGgoAAAANSUhEUgAA..." (just the base64 characters). Example INCORRECT: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..." (has prefix - will fail). Example INCORRECT: "file_000000009ca4720aaf20f16309d0c674" (file ID - will fail). Example INCORRECT: "/mnt/data/image.png" (file path - will fail). If you have an image file, you MUST: 1) Read the file content, 2) Convert it to base64 encoding, 3) Provide ONLY the base64 string (no prefix, no file path, no file ID).'
-                        },
-                        mimeType: {
-                          type: 'string',
-                          description: 'MIME type of the image. Required values: "image/png", "image/jpeg", "image/jpg", "image/webp", or "image/gif". Must match the actual image format.'
-                        }
-                      },
-                      required: ['data', 'mimeType']
                     },
-                    minItems: 1,
-                    description: 'Array of images to analyze for flight details. ⚠️ CRITICAL: Each image MUST have base64-encoded data. File paths or file IDs will NOT work and will be rejected.'
+                    status: { type: 'string', description: 'Overall status of the search' }
                   }
-                },
-                required: ['images']
-              }
-            },
-            */
-            {
-              name: 'format_flight_pricecheck_request',
-              title: 'Format Flight Request',
-              description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
-              readOnlyHint: true,
-              destructiveHint: false,
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  user_request: { 
-                    type: 'string', 
-                    description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.' 
-                  }
-                },
-                required: ['user_request']
+                }
               },
-              outputSchema: {
-                type: 'object',
-                description: 'Formatted flight data or request for more information',
-                properties: {
-                  message: { type: 'string', description: 'Status message or instructions' },
-                  needsMoreInfo: { type: 'boolean', description: 'Whether additional information is required' },
-                  missingFields: { 
-                    type: 'array', 
-                    description: 'List of missing required fields if needsMoreInfo is true',
-                    items: { type: 'string' }
-                  },
-                  flightData: {
-                    type: 'object',
-                    description: 'Formatted flight data ready for flight_pricecheck (only present if needsMoreInfo is false)',
-                    properties: {
-                      trip: { type: 'object' },
-                      source: { type: 'string' },
-                      price: { type: 'string' },
-                      currency: { type: 'string' },
-                      location: { type: 'string' }
+              // DEACTIVATED: Image extraction tool (commented out but kept for future use)
+              /*
+              {
+                name: 'extract_flight_from_image',
+                description: 'Extract flight details from one or more booking screenshots/images. Upload images of flight bookings, itineraries, or confirmation emails. The tool will extract flight information and return it. If the data is complete, use it to call flight_pricecheck. If incomplete, use format_flight_pricecheck_request to ask the user for missing details. ⚠️ CRITICAL: Images MUST be provided as base64-encoded strings. File IDs, file paths, or URLs will NOT work and will cause the tool to fail. You MUST convert images to base64 encoding before calling this tool.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    images: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          data: {
+                            type: 'string',
+                            description: '⚠️ CRITICAL REQUIREMENT: Image data MUST be a base64-encoded string. NO OTHER FORMAT WILL WORK. Do NOT send file IDs (like "file_000000009ca4720aaf20f16309d0c674"), file paths (like "/mnt/data/image.png"), or URLs. These will be rejected and the tool will fail. Format: Provide ONLY the raw base64 string without any data URI prefix. Example CORRECT: "iVBORw0KGgoAAAANSUhEUgAA..." (just the base64 characters). Example INCORRECT: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..." (has prefix - will fail). Example INCORRECT: "file_000000009ca4720aaf20f16309d0c674" (file ID - will fail). Example INCORRECT: "/mnt/data/image.png" (file path - will fail). If you have an image file, you MUST: 1) Read the file content, 2) Convert it to base64 encoding, 3) Provide ONLY the base64 string (no prefix, no file path, no file ID).'
+                          },
+                          mimeType: {
+                            type: 'string',
+                            description: 'MIME type of the image. Required values: "image/png", "image/jpeg", "image/jpg", "image/webp", or "image/gif". Must match the actual image format.'
+                          }
+                        },
+                        required: ['data', 'mimeType']
+                      },
+                      minItems: 1,
+                      description: 'Array of images to analyze for flight details. ⚠️ CRITICAL: Each image MUST have base64-encoded data. File paths or file IDs will NOT work and will be rejected.'
                     }
                   },
-                  readyForPriceCheck: { type: 'boolean', description: 'Whether the data is ready to use with flight_pricecheck' }
+                  required: ['images']
+                }
+              },
+              */
+              {
+                name: 'format_flight_pricecheck_request',
+                title: 'Format Flight Request',
+                description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
+                readOnlyHint: true,
+                destructiveHint: false,
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    user_request: {
+                      type: 'string',
+                      description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.'
+                    }
+                  },
+                  required: ['user_request']
+                },
+                outputSchema: {
+                  type: 'object',
+                  description: 'Formatted flight data or request for more information',
+                  properties: {
+                    message: { type: 'string', description: 'Status message or instructions' },
+                    needsMoreInfo: { type: 'boolean', description: 'Whether additional information is required' },
+                    missingFields: {
+                      type: 'array',
+                      description: 'List of missing required fields if needsMoreInfo is true',
+                      items: { type: 'string' }
+                    },
+                    flightData: {
+                      type: 'object',
+                      description: 'Formatted flight data ready for flight_pricecheck (only present if needsMoreInfo is false)',
+                      properties: {
+                        trip: { type: 'object' },
+                        source: { type: 'string' },
+                        price: { type: 'string' },
+                        currency: { type: 'string' },
+                        location: { type: 'string' }
+                      }
+                    },
+                    readyForPriceCheck: { type: 'boolean', description: 'Whether the data is ready to use with flight_pricecheck' }
+                  }
                 }
               }
-            }
-          ]
-        }
-      };
-      console.log(JSON.stringify(response));
+            ]
+          }
+        };
+        console.log(JSON.stringify(response));
       } else if (request.method === 'tools/call') {
         const { name, arguments: args } = request.params;
-        
+
         console.error(`🔧 Tool called: ${name}`);
         console.error('📝 Arguments received:', {
           hasImages: !!args.images,
@@ -2005,9 +2148,9 @@ process.stdin.on('data', async (data) => {
           hasFlightData: !!args.flightData,
           hasUserRequest: !!args.user_request
         });
-        
+
         let result;
-        
+
         // DEACTIVATED: Image extraction tool handler (commented out but kept for future use)
         /*
         if (name === 'extract_flight_from_image') {
@@ -2174,16 +2317,16 @@ process.stdin.on('data', async (data) => {
         */
         if (name === 'format_flight_pricecheck_request') {
           console.error('🚀 Starting format_flight_pricecheck_request...');
-          
+
           // Validate that we have user_request
           if (!args.user_request) {
             throw new Error('user_request must be provided');
           }
-          
+
           // Parse the user's natural language request (which may contain pasted extracted data)
           const parsedRequest = await parseFlightRequest(args.user_request);
           console.error('📊 Parsed request result:', parsedRequest.needsMoreInfo ? 'Needs more info' : 'Ready to proceed');
-          
+
           if (parsedRequest.needsMoreInfo) {
             result = {
               message: parsedRequest.message + ' IMPORTANT: When providing the missing information, include the complete previous flight details (paste the full extracted data or previous request) along with the missing fields, as this tool does not retain context between calls.',
@@ -2194,21 +2337,21 @@ process.stdin.on('data', async (data) => {
             // Flight information parsed successfully - return formatted flightData for flight_pricecheck
             console.error('✅ Flight information parsed successfully!');
             console.error('📊 Parsed flight data:', JSON.stringify(parsedRequest.flightData, null, 2));
-            
+
             // Determine source based on whether the request contains extracted data indicators
             // If user_request contains JSON-like structure or mentions "extracted", assume IMAGE_EXTRACTION
-            const source = (args.user_request.includes('extracted') || args.user_request.includes('{"tripType"') || args.user_request.includes('outboundSegments')) 
-              ? 'IMAGE_EXTRACTION' 
+            const source = (args.user_request.includes('extracted') || args.user_request.includes('{"tripType"') || args.user_request.includes('outboundSegments'))
+              ? 'IMAGE_EXTRACTION'
               : 'MCP';
-            
+
             // Prepare flightData exactly as flight_pricecheck will use it
             const flightData = {
               ...parsedRequest.flightData,
               source: source
             };
-            
+
             console.error('📤 Formatted flightData for flight_pricecheck:', JSON.stringify(flightData, null, 2));
-            
+
             result = {
               message: 'Flight details parsed and formatted successfully! Use the flightData below to call flight_pricecheck.',
               flightData: flightData,
@@ -2217,7 +2360,7 @@ process.stdin.on('data', async (data) => {
           }
         } else if (name === 'flight_pricecheck') {
           console.error('🔍 Processing flight_pricecheck tool...');
-          
+
           // Support both old format (flightData) and new format (direct properties)
           const searchData = args.flightData || {
             trip: args.trip,
@@ -2226,9 +2369,9 @@ process.stdin.on('data', async (data) => {
             currency: args.currency,
             location: args.location
           };
-          
+
           console.error('📤 Search flights payload:', JSON.stringify(searchData, null, 2));
-          
+
           try {
             // Transform to API format and sanitize the request
             const apiRequest = transformToApiFormat(searchData);
@@ -2238,14 +2381,14 @@ process.stdin.on('data', async (data) => {
             console.error('📤 API Request keys:', Object.keys(sanitizedRequest));
             console.error('📤 API Request trip keys:', sanitizedRequest.trip ? Object.keys(sanitizedRequest.trip) : 'NO TRIP');
             console.error('📤 API Request trip.legs:', sanitizedRequest.trip?.legs ? `${sanitizedRequest.trip.legs.length} legs` : 'NO LEGS');
-            
+
             // Define progress callback to stream results as they appear
             const onProgress = (progressResults) => {
               // Send progress notification via notifications/message (which MCP Inspector displays)
               // Include the full results JSON so users can see all results as they arrive
               const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
               const status = progressResults.status || 'IN_PROGRESS';
-              
+
               // Send a message notification with the results
               const messageNotification = {
                 jsonrpc: '2.0',
@@ -2264,13 +2407,13 @@ process.stdin.on('data', async (data) => {
               console.log(JSON.stringify(messageNotification));
               console.error(`📤 Sent progress notification: ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
             };
-            
+
             const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
-            
+
             // Format message to display each offer on its own line
             const resultCount = searchResult.totalResults || searchResult.results?.length || 0;
             let formattedMessage = `Flight price search completed! Found ${resultCount} result(s):\n\n`;
-            
+
             if (searchResult.results && searchResult.results.length > 0) {
               searchResult.results.forEach((offer, index) => {
                 const rank = offer.rank || index + 1;
@@ -2278,7 +2421,7 @@ process.stdin.on('data', async (data) => {
                 const website = offer.website || 'Unknown';
                 const bookingUrl = offer.bookingUrl || '';
                 const fareType = offer.fareType || '';
-                
+
                 formattedMessage += `${rank}. ${website} - ${price}`;
                 if (fareType) {
                   formattedMessage += ` (${fareType})`;
@@ -2291,7 +2434,7 @@ process.stdin.on('data', async (data) => {
             } else {
               formattedMessage += 'No results found.\n';
             }
-            
+
             result = {
               message: formattedMessage.trim(),
               searchResult: searchResult,
@@ -2312,7 +2455,7 @@ process.stdin.on('data', async (data) => {
             arguments: args
           };
         }
-        
+
         const response = {
           jsonrpc: '2.0',
           id: request.id,

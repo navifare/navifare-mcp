@@ -10,20 +10,11 @@
 
 ### Section 1: Server Logo
 
-**Option A: Paste SVG Content (Recommended)**
 1. Open the file `logo_squared.svg` in this directory
 2. Copy the entire SVG content (the XML code)
 3. Paste it into the "Server Logo" field in the submission form
 
-**Option B: Use SVG URL**
-If you prefer to host the SVG on your website:
-1. Upload `logo_squared.svg` to your website (e.g., to `https://www.navifare.com/logo_squared.svg`)
-2. Verify the URL is accessible
-3. Paste the URL into the "Server Logo" field
-
 **Note**: The SVG embeds your PNG logo as base64. This works for submission, but if you have the original vector source (Illustrator, Figma, etc.), that would be better quality.
-
-**SVG URL (if hosted)**: `https://www.navifare.com/logo_squared.svg`
 
 ### Section 2: Server Logo Url
 

@@ -74,3 +74,5 @@ https://www.google.com/s2/favicons?domain=navifare.com&sz=64
 **Domain**: `navifare.com`  
 **Favicon Check URL**: `https://www.google.com/s2/favicons?domain=navifare.com&sz=64`
 
+
+

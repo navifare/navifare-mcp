@@ -10,7 +10,7 @@ const mcpServer = new McpServer({ name: "navifare-mcp", version: "0.1.5" });
 mcpServer.registerTool(
   "search_flights",
   {
-    description: "Search for flight prices across multiple booking sources. Ask the user for ALL required flight details: airline code (2-letter), flight number, departure/arrival airports (3-letter IATA codes), departure/arrival times (HH:MM format), dates (YYYY-MM-DD), cabin class (ECONOMY/BUSINESS/FIRST), number of passengers (adults/children/infants), reference price they saw, and currency. Then submit the search and automatically poll for results.",
+    description: "Compare flight prices across booking sites to find the best deal. Extracts flight details from user-provided screenshots or text and searches multiple booking platforms. Returns ranked results showing prices from different websites. Note: Number of adults defaults to 1, currency is auto-detected from price symbols (€ → EUR, $ → USD), and location is set automatically.",
     inputSchema: {
       trip: z.object({
         legs: z.array(
@@ -49,7 +49,7 @@ mcpServer.registerTool(
 mcpServer.registerTool(
   "submit_session",
   {
-    description: "Create a price discovery session in Navifare",
+    description: "[INTERNAL] Create a price discovery session. Use search_flights instead for end-to-end flight search.",
     inputSchema: {
       location: z.string().optional().describe("User's country code (2-letter ISO, e.g., 'ZZ', 'CH', 'US')"),
       trip: z.object({
@@ -88,7 +88,7 @@ mcpServer.registerTool(
 mcpServer.registerTool(
   "get_session_results",
   {
-    description: "Get results for a Navifare session",
+    description: "[INTERNAL] Poll for session results. Use search_flights instead for end-to-end flight search with auto-polling.",
     inputSchema: { request_id: z.string() },
   },
   async ({ request_id }: { request_id: string }) => {

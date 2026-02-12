@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { AI_MODEL } from './config/aiModel.js';
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(
@@ -104,11 +105,10 @@ IMPORTANT EXTRACTION RULES:
    - If AM/PM indicator is unclear or missing, mark as lower confidence but still extract the time
 6. Airports: Use 3-letter IATA codes only
 7. **AIRLINE: Use the full airline name as it appears (e.g., "British Airways", "ITA Airways", "Lufthansa", "Air France")**
-8. **FLIGHT NUMBER: MUST extract the COMPLETE flight number including airline prefix**
-   - Extract the full flight number as it appears: "DY816" → "DY816", "U2123" → "U2123", "BA553" → "BA553", "W46011" → "W46011"
-   - Include any letters or digits that appear before the numeric part (e.g., airline codes like DY, U2, BA, W4, FR, KM)
-   - Look for patterns like "BA 553" → "BA553", "DY 816" → "DY816", "U2 123" → "U2123"
-   - If you see multiple potential numbers, pick the one that includes the airline prefix when visible
+8. **FLIGHT NUMBER: MUST extract ONLY the numeric part, excluding the airline prefix**
+   - Extract ONLY the numeric digits: "DY816" → "816", "U2 3811" → "3811", "BA553" → "553", "LX 1612" → "1612", "FR100" → "100", "W46011" → "6011"
+   - CRITICAL: Flight numbers can be 1-4 digits long. When you see a space between the airline code and numbers (e.g., "U2 3811"), extract ONLY the numeric part: "U2 3811" becomes "3811" (NOT "U23811" or "U2 2"). The airline prefix (2 letters like "U2", "BA", "DY") should NOT be included.
+   - Always extract the complete numeric portion - do not truncate or shorten flight numbers.
    - If flight number is not visible or unclear, set to null
 9. **FLIGHT DURATION: Extract flight duration in HH:MM format (e.g., "22:30" for 22 hours 30 minutes)**
 10. **CURRENCY: MUST extract three letters ISO currency code (EUR, USD, GBP, etc.) - look for symbols or text**
@@ -123,7 +123,7 @@ If you cannot clearly identify specific flight information from the image:
 - Set flightNumber to null (not made-up numbers like "1613") 
 - Set departure/arrival to null (not codes like "MXP", "ZRH")
 - Set times to null (not times like "10:40", "11:40")
-- **DATES: If a date is clearly visible but the year is missing, compare month/day to today (${currentDate}). If month/day is later than today, use ${currentYear}; if earlier than today, use ${currentYear + 1}. If a date shows a past year, replace it with ${currentYear}. If no date is visible or unclear, set to null. Dates must never be in the past.**
+- **DATES: If a date is clearly visible but the year is missing, compare month/day to today (${currentDate}). If month/day is later than today, use ${currentYear}; if earlier than today, use ${currentYear + 1}. If a date shows a past year OR if the date (even with current year) is in the past, replace it with ${currentYear + 1} (next year). If no date is visible or unclear, set to null. Dates must never be in the past.**
 - Set currency to null (if no currency visible)
 - Set totalPrice to null (if no price visible)
 - IF IT'S CLEAR THAT THE USER DIDN'T PASTE A FLIGHT, RETURN ALL FIELDS TO NULL.
@@ -137,7 +137,7 @@ AIRLINE NAME EXTRACTION:
 
     console.log('📷 Processing image with Gemini...');
     
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: AI_MODEL });
     
     const result = await model.generateContent([
       prompt,
@@ -200,7 +200,7 @@ AIRLINE NAME EXTRACTION:
       // Add metadata
       extractedData.extractionMetadata = {
         timestamp: new Date().toISOString(),
-        model: 'gemini-1.5-flash',
+        model: AI_MODEL,
         confidence: 'high',
         oneWayDetected: isOneWayDetected
       };

@@ -189,9 +189,9 @@ export async function submit_and_poll_session(input: any, onProgress?: (results:
     console.error(`✅ Session created with ID: ${request_id}`);
     console.error('⏳ Starting polling for results (will poll for up to 90 seconds)...');
 
-    // Poll for results: 90 seconds total, checking every 10 seconds
+    // Poll for results: 90 seconds total, checking every 5 seconds for streaming effect
     const totalTimeout = 90000; // 90 seconds in milliseconds
-    const pollInterval = 10000; // 10 seconds between polls
+    const pollInterval = 5000; // 5 seconds between polls - gives streaming impression
     
     const startTime = Date.now();
     let lastResults: any = null;
