@@ -2360,7 +2360,8 @@ app.post('/mcp', async (req, res) => {
       console.log(`🔧 Calling tool: ${name}`);
       console.log('📝 Arguments:', JSON.stringify(args, null, 2));
 
-      // Detect if client wants streaming (SSE)
+      // Detect if client wants streaming (SSE) - per MCP Streamable HTTP spec
+      // Client MUST include Accept header listing both application/json and text/event-stream
       const wantsStreaming = req.headers['accept']?.includes('text/event-stream') ||
         req.query.stream === 'true' ||
         req.headers['mcp-stream'] === 'true';
@@ -2625,15 +2626,15 @@ app.post('/mcp', async (req, res) => {
         if (wantsStreaming) {
           console.log('📡 Using SSE streaming mode');
 
-          // Set SSE headers
+          // Set SSE headers per MCP spec
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
           res.setHeader('Mcp-Session-Id', sessionId);
+          res.setHeader('MCP-Protocol-Version', '2025-06-18');
 
-          // Send initial connection event
-          res.write(`: connected\n`);
-          res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+          // Send initial connection comment
+          res.write(`: connected\n\n`);
 
           try {
             // Transform to API format and sanitize the request
@@ -2649,8 +2650,8 @@ app.post('/mcp', async (req, res) => {
 
               console.log(`📤 Streaming ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
 
-              // Send progress event via SSE
-              const progressEvent = {
+              // Send progress notification via SSE (as default message event, no custom event type)
+              const progressNotification = {
                 jsonrpc: '2.0',
                 method: 'notifications/message',
                 params: {
@@ -2664,7 +2665,8 @@ app.post('/mcp', async (req, res) => {
                 }
               };
 
-              res.write(`event: progress\ndata: ${JSON.stringify(progressEvent)}\n\n`);
+              // MCP spec: send as default message event (no event: field)
+              res.write(`data: ${JSON.stringify(progressNotification)}\n\n`);
             };
 
             const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
@@ -2701,7 +2703,8 @@ app.post('/mcp', async (req, res) => {
               status: searchResult.status || 'COMPLETED'
             };
 
-            // Send final result as SSE event in MCP-compliant format
+            // Send final JSON-RPC response in MCP-compliant format
+            // Per MCP spec: send as default message event (no custom event type)
             const response = {
               jsonrpc: '2.0',
               id: req.body.id,
@@ -2711,12 +2714,13 @@ app.post('/mcp', async (req, res) => {
                     type: 'text',
                     text: JSON.stringify(finalResult, null, 2)
                   }
-                ],
-                isError: false
+                ]
+                // Remove isError: false - not needed for successful responses per MCP spec
               }
             };
 
-            res.write(`event: complete\ndata: ${JSON.stringify(response)}\n\n`);
+            // MCP spec: send final response as default message event, then close stream
+            res.write(`data: ${JSON.stringify(response)}\n\n`);
             res.end();
             return;
 
@@ -2731,7 +2735,8 @@ app.post('/mcp', async (req, res) => {
                 data: apiError.message
               }
             };
-            res.write(`event: error\ndata: ${JSON.stringify(errorResponse)}\n\n`);
+            // MCP spec: send error as default message event
+            res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
             res.end();
             return;
           }
@@ -2744,8 +2749,10 @@ app.post('/mcp', async (req, res) => {
             const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
             console.log('📤 API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
 
-            // Set session header even for non-streaming
+            // Set MCP-compliant headers for non-streaming JSON response
+            res.setHeader('Content-Type', 'application/json');
             res.setHeader('Mcp-Session-Id', sessionId);
+            res.setHeader('MCP-Protocol-Version', '2025-06-18');
 
             // Define progress callback to stream results as they appear
             const onProgress = (progressResults) => {
