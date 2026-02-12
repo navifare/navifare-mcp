@@ -2633,8 +2633,8 @@ app.post('/mcp', async (req, res) => {
           res.setHeader('Mcp-Session-Id', sessionId);
           res.setHeader('MCP-Protocol-Version', '2025-06-18');
 
-          // Send initial connection comment
-          res.write(`: connected\n\n`);
+          // Extract progressToken from request _meta if provided
+          const progressToken = params._meta?.progressToken;
 
           try {
             // Transform to API format and sanitize the request
@@ -2644,29 +2644,31 @@ app.post('/mcp', async (req, res) => {
             console.log('📤 [SSE] API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
 
             // Define progress callback to stream results as they appear
+            let progressCount = 0;
             const onProgress = (progressResults) => {
               const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
               const status = progressResults.status || 'IN_PROGRESS';
 
               console.log(`📤 Streaming ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
 
-              // Send progress notification via SSE (as default message event, no custom event type)
-              const progressNotification = {
-                jsonrpc: '2.0',
-                method: 'notifications/message',
-                params: {
-                  level: 'info',
-                  data: {
-                    message: `Flight search progress: Found ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`,
-                    results: progressResults,
-                    resultCount: resultCount,
-                    status: status
+              // Send progress notification via SSE using standard MCP notifications/progress method
+              // Only send if client provided a progressToken
+              if (progressToken) {
+                progressCount = resultCount;
+                const progressNotification = {
+                  jsonrpc: '2.0',
+                  method: 'notifications/progress',
+                  params: {
+                    progressToken: progressToken,
+                    progress: resultCount,
+                    total: 100, // Estimated total (unknown, so using 100 as placeholder)
+                    message: `Found ${resultCount} booking source${resultCount !== 1 ? 's' : ''} (status: ${status})`
                   }
-                }
-              };
+                };
 
-              // MCP spec: send as default message event (no event: field)
-              res.write(`data: ${JSON.stringify(progressNotification)}\n\n`);
+                // MCP spec: send as default message event (no event: field)
+                res.write(`data: ${JSON.stringify(progressNotification)}\n\n`);
+              }
             };
 
             const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
