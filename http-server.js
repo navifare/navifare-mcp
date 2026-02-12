@@ -1582,7 +1582,7 @@ app.get('/mcp', (req, res) => {
       {
         name: 'flight_pricecheck',
         title: 'Flight Price Check',
-        description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
+        description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data.',
         readOnlyHint: false,
         destructiveHint: false,
         inputSchema: {
@@ -2172,7 +2172,7 @@ app.post('/mcp', async (req, res) => {
         {
           name: 'flight_pricecheck',
           title: 'Flight Price Check',
-          description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
+          description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data.',
           readOnlyHint: false,
           destructiveHint: false,
           inputSchema: {
