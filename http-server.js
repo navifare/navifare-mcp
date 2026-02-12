@@ -15,6 +15,7 @@ import fetch from 'node-fetch';
 import { submit_session, get_session_results, submit_and_poll_session } from './dist/navifare.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import sharp from 'sharp';
+import { AI_MODEL } from './src/config/aiModel.js';
 
 const app = express();
 const PORT = process.env.PORT || 2091;
@@ -273,31 +274,60 @@ async function parseFlightRequest(userRequest) {
   try {
     console.log('🔍 Starting Gemini request...');
     console.log('📝 User request:', userRequest.substring(0, 200) + '...');
-    
-    const model = getGeminiAI().getGenerativeModel({ model: "gemini-2.5-flash" });
-    
+
+    const model = getGeminiAI().getGenerativeModel({ model: AI_MODEL });
+
     // Get current date context dynamically
     const currentYear = new Date().getFullYear();
     const currentDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    
+
     const prompt = `Analyze this flight request: "${userRequest}"
 
 First, identify what flight information the user HAS provided and what is MISSING.
 
 CRITICAL REQUIREMENTS:
 1. AIRLINE: Use the 2 letter IATA airline code (e.g., "AZ", "LH", "BA", "AF"), NOT the airline name (e.g., NOT "ITA Airways", "Lufthansa", "British Airways"). If only the airline name is provided, convert it to its IATA code.
-2. DATES: Use the CURRENT YEAR (${currentYear}) for dates unless explicitly specified otherwise. If a date appears to be in the past (e.g., 2014, 2023), convert it to ${currentYear} or the appropriate future year. For dates without a year, if month/day >= today (${currentDate}), use ${currentYear}; if earlier, use ${currentYear + 1}. Dates must be in YYYY-MM-DD format.
-3. TIMES: Convert times like "6:40 PM" or "6.40pm" to 24-hour format "HH:MM:SS" (e.g., "18:40:00"). Always respect AM/PM indicators:
+2. AIRPORTS: Use 3-letter IATA codes. IMPORTANT: When the user mentions a city name (e.g., "Milan", "Rome", "New York"), ALWAYS prefer city-level multi-airport IATA codes over individual airport codes:
+   - Milan → MIL (NOT MXP or LIN)
+   - Rome → ROM (NOT FCO or CIA)
+   - New York → NYC (NOT JFK, LGA, or EWR)
+   - London → LON (NOT LHR, LGW, STN, or LTN)
+   - Paris → PAR (NOT CDG or ORY)
+   Only use individual airport codes (e.g., MXP, FCO) if the user explicitly specifies a particular airport name (e.g., "Milan Malpensa", "Rome Fiumicino") or provides specific IATA codes like BGY, WMI, CIA, FCO.
+3. DATES: Use the CURRENT YEAR (${currentYear}) for dates unless explicitly specified otherwise. If a date appears to be in the past (e.g., 2014, 2023), convert it to ${currentYear} or the appropriate future year. For dates without a year, if month/day >= today (${currentDate}), use ${currentYear}; if earlier, use ${currentYear + 1}. Dates must be in YYYY-MM-DD format.
+4. TIMES: Convert times like "6:40 PM" or "6.40pm" to 24-hour format "HH:MM:SS" (e.g., "18:40:00"). Always respect AM/PM indicators:
    - 1:55 PM → 13:55:00 (add 12 hours)
    - 10:45 PM → 22:45:00 (add 12 hours)
    - 1:55 AM → 01:55:00 (keep same)
    - 12:00 PM → 12:00:00 (noon)
    - 12:00 AM → 00:00:00 (midnight)
 
+STRUCTURE REQUIREMENTS:
+5. LEGS: The "legs" array should contain SEPARATE objects for OUTBOUND and RETURN journeys:
+   - ONE-WAY trips: 1 leg
+   - ROUND-TRIP trips: 2 legs (first leg = outbound, second leg = return)
+   - If the request mentions "outbound"/"departure" and "return"/"inbound", those are SEPARATE legs.
+6. SEGMENTS: Each leg can have MULTIPLE segments if there are connecting flights:
+   - Direct flight: 1 segment in the leg
+   - Connecting flight (with stops): Multiple segments in the same leg
+
 If the user has provided complete flight information (airline code, flight number, airports, dates, times), return JSON with this structure:
 {
   "trip": {
-    "legs": [{"segments": [{"airline": "XX", "flightNumber": "123", "departureAirport": "XXX", "arrivalAirport": "XXX", "departureDate": "YYYY-MM-DD", "departureTime": "HH:MM:SS", "arrivalTime": "HH:MM:SS", "plusDays": 0}]}],
+    "legs": [
+      {
+        "segments": [
+          {"airline": "FR", "flightNumber": "123", "departureAirport": "BGY", "arrivalAirport": "WMI", "departureDate": "YYYY-MM-DD", "departureTime": "HH:MM:SS", "arrivalTime": "HH:MM:SS", "plusDays": 0},
+          {"airline": "FR", "flightNumber": "456", "departureAirport": "WMI", "arrivalAirport": "CIA", "departureDate": "YYYY-MM-DD", "departureTime": "HH:MM:SS", "arrivalTime": "HH:MM:SS", "plusDays": 0}
+        ]
+      },
+      {
+        "segments": [
+          {"airline": "FR", "flightNumber": "789", "departureAirport": "FCO", "arrivalAirport": "MLA", "departureDate": "YYYY-MM-DD", "departureTime": "HH:MM:SS", "arrivalTime": "HH:MM:SS", "plusDays": 0},
+          {"airline": "FR", "flightNumber": "012", "departureAirport": "MLA", "arrivalAirport": "MXP", "departureDate": "YYYY-MM-DD", "departureTime": "HH:MM:SS", "arrivalTime": "HH:MM:SS", "plusDays": 0}
+        ]
+      }
+    ],
     "travelClass": "ECONOMY",
     "adults": 1,
     "children": 0,
@@ -316,10 +346,10 @@ If the user has NOT provided complete information, analyze what they provided an
 Return ONLY JSON.`;
 
     // Add timeout to prevent hanging
-    const timeoutPromise = new Promise((_, reject) => 
+    const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Request timeout after 45 seconds')), 45000)
     );
-    
+
     const startTime = Date.now();
     const result = await Promise.race([
       model.generateContent(prompt),
@@ -327,10 +357,10 @@ Return ONLY JSON.`;
     ]);
     const endTime = Date.now();
     console.log(`⏰ Gemini API call completed in ${endTime - startTime}ms`);
-    
+
     const response = await result.response;
     const text = response.text();
-    
+
     // Clean up the response text (remove markdown code blocks if present)
     let cleanedText = text.trim();
     if (cleanedText.startsWith('```json')) {
@@ -338,10 +368,10 @@ Return ONLY JSON.`;
     } else if (cleanedText.startsWith('```')) {
       cleanedText = cleanedText.replace(/^```\s*/, '').replace(/\s*```$/, '');
     }
-    
+
     // Parse the JSON response
     const flightData = JSON.parse(cleanedText);
-    
+
     // Check if Gemini returned a needsMoreInfo response
     if (flightData.needsMoreInfo) {
       return {
@@ -350,7 +380,7 @@ Return ONLY JSON.`;
         missingFields: flightData.missingFields || []
       };
     }
-    
+
     // Check for missing required fields
     const missingFields = [];
     if (!flightData.trip) {
@@ -378,7 +408,7 @@ Return ONLY JSON.`;
       if (!flightData.trip.adults) missingFields.push('number of adults');
       if (!flightData.trip.travelClass) missingFields.push('travel class');
     }
-    
+
     if (missingFields.length > 0) {
       let question = "I need a bit more information to search for your flight. ";
       if (missingFields.length === 1) {
@@ -388,7 +418,7 @@ Return ONLY JSON.`;
       } else {
         question += `Could you please provide more details about your flight? I'm missing: ${missingFields.slice(0, 3).join(', ')} and ${missingFields.length - 3} other details.`;
       }
-      
+
       return {
         needsMoreInfo: true,
         message: question,
@@ -396,12 +426,12 @@ Return ONLY JSON.`;
         flightData
       };
     }
-    
+
     return {
       needsMoreInfo: false,
       flightData
     };
-    
+
   } catch (error) {
     console.error('❌ Error parsing flight request with Gemini:', error);
 
@@ -423,55 +453,55 @@ Return ONLY JSON.`;
 // Reuses the round trip detection pattern from the web app
 function splitRoundTripLegs(legs) {
   if (!legs || legs.length === 0) return legs;
-  
+
   // Check each leg for round trip patterns
   const normalizedLegs = [];
-  
+
   for (const leg of legs) {
     if (!leg.segments || leg.segments.length < 2) {
       // Single segment or no segments - keep as-is
       normalizedLegs.push(leg);
       continue;
     }
-    
+
     const segments = leg.segments;
     const firstSegment = segments[0];
-    
+
     // Need departureAirport/arrivalAirport (API format) or departure/arrival (extracted format)
     const origin = firstSegment.departureAirport || firstSegment.departure;
-    
+
     if (!origin) {
       // Can't determine origin, keep as-is
       normalizedLegs.push(leg);
       continue;
     }
-    
+
     // Check if any segment returns to origin (round trip pattern)
     // This matches the logic from geminiService.ts: detectRoundTripPattern + segment splitting
     let foundReturn = false;
     for (let i = 1; i < segments.length; i++) {
       const segment = segments[i];
       const arrival = segment.arrivalAirport || segment.arrival;
-      
+
       if (arrival && arrival.toUpperCase() === origin.toUpperCase()) {
         // Found return flight - split segments (same logic as geminiService.ts lines 690-697)
         console.log(`🔄 Splitting round trip: first ${i} segments are outbound, remaining are return`);
         const outboundSegments = segments.slice(0, i);
         const returnSegments = segments.slice(i);
-        
+
         normalizedLegs.push({ segments: outboundSegments });
         normalizedLegs.push({ segments: returnSegments });
         foundReturn = true;
         break;
       }
     }
-    
+
     if (!foundReturn) {
       // No round trip pattern detected, keep leg as-is
       normalizedLegs.push(leg);
     }
   }
-  
+
   return normalizedLegs;
 }
 
@@ -480,7 +510,7 @@ function transformToApiFormat(flightData) {
   if (flightData.trip && flightData.trip.legs) {
     // Reuse the round trip splitting logic (same pattern as geminiService.ts)
     const normalizedLegs = splitRoundTripLegs(flightData.trip.legs);
-    
+
     if (normalizedLegs.length !== flightData.trip.legs.length) {
       // Legs were split, return normalized structure
       return {
@@ -491,10 +521,10 @@ function transformToApiFormat(flightData) {
         }
       };
     }
-    
+
     return flightData;
   }
-  
+
   // Otherwise, transform the old format to the new format
   return {
     trip: {
@@ -547,18 +577,18 @@ async function optimizeImagesForGemini(images) {
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
-    
+
     // Clean the base64 data thoroughly before processing
     let data = img.data || '';
-    
+
     // Remove data URI prefix if present
     if (data.startsWith('data:image/')) {
       data = data.split(',')[1] || data;
     }
-    
+
     // Remove ALL whitespace (spaces, newlines, tabs, etc.)
     data = data.replace(/\s/g, '');
-    
+
     // Validate that we have actual data
     if (!data || data.length < 100) {
       console.log(`❌ Image ${i} has invalid or too short base64 data (${data.length} chars)`);
@@ -568,7 +598,7 @@ async function optimizeImagesForGemini(images) {
     try {
       // Validate base64 before decoding
       const decoded = Buffer.from(data, 'base64');
-      
+
       // Verify the decoded buffer is valid
       if (decoded.length === 0) {
         throw new Error('Decoded buffer is empty');
@@ -619,11 +649,11 @@ async function optimizeImagesForGemini(images) {
           .toBuffer();
 
         const finalBase64 = emergencyBuffer.toString('base64');
-        
+
         if (!finalBase64 || finalBase64.length < 100) {
           throw new Error(`Emergency optimized base64 is too short (${finalBase64?.length || 0} chars)`);
         }
-        
+
         optimizedImages.push({
           data: finalBase64,
           mimeType: 'image/jpeg'
@@ -632,7 +662,7 @@ async function optimizeImagesForGemini(images) {
         if (!optimizedBase64 || optimizedBase64.length < 100) {
           throw new Error(`Optimized base64 is too short (${optimizedBase64?.length || 0} chars)`);
         }
-        
+
         optimizedImages.push({
           data: optimizedBase64,
           mimeType: 'image/jpeg'
@@ -641,19 +671,19 @@ async function optimizeImagesForGemini(images) {
 
     } catch (error) {
       console.log(`❌ Failed to optimize image ${i}:`, error.message);
-      
+
       // If optimization fails, try with original (but ensure it's clean)
       let fallbackData = data;
       if (fallbackData.startsWith('data:image/')) {
         fallbackData = fallbackData.split(',')[1] || fallbackData;
       }
       fallbackData = fallbackData.replace(/\s/g, '');
-      
+
       // Validate fallback data
       if (!fallbackData || fallbackData.length < 100) {
         throw new Error(`Cannot process image ${i}: optimization failed and original data is invalid`);
       }
-      
+
       optimizedImages.push({
         data: fallbackData,
         mimeType: img.mimeType || 'image/jpeg'
@@ -676,7 +706,7 @@ async function extractFlightDetailsFromImages(images) {
     };
   }
 
-  const model = getGeminiAI().getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = getGeminiAI().getGenerativeModel({ model: AI_MODEL });
 
   // Get current date context
   const currentYear = new Date().getFullYear();
@@ -703,19 +733,19 @@ async function extractFlightDetailsFromImages(images) {
   // Convert optimized images to the format expected by Gemini
   const imageParts = optimizedImages.map((img, index) => {
     let cleanedData = img.data || '';
-    
+
     if (!cleanedData) {
       throw new Error(`Image ${index} has no data property`);
     }
-    
+
     // Remove data URI prefix if present
     if (cleanedData.startsWith('data:image/')) {
       cleanedData = cleanedData.split(',')[1] || cleanedData;
     }
-    
+
     // Remove ALL whitespace
     cleanedData = cleanedData.replace(/\s/g, '');
-    
+
     // Validate cleaned data
     if (!cleanedData || cleanedData.length < 100) {
       throw new Error(`Image ${index} has invalid base64 data after cleaning`);
@@ -742,13 +772,13 @@ async function extractFlightDetailsFromImages(images) {
     // Check for PNG header: 89 50 4E 47 0D 0A 1A 0A
     // Check for JPEG header: FF D8 FF
     // Check for WebP header: RIFF ... WEBP
-    const isPNG = imageBuffer.length >= 8 && 
-      imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50 && 
+    const isPNG = imageBuffer.length >= 8 &&
+      imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50 &&
       imageBuffer[2] === 0x4E && imageBuffer[3] === 0x47;
-    
-    const isJPEG = imageBuffer.length >= 3 && 
+
+    const isJPEG = imageBuffer.length >= 3 &&
       imageBuffer[0] === 0xFF && imageBuffer[1] === 0xD8 && imageBuffer[2] === 0xFF;
-    
+
     const isWebP = imageBuffer.length >= 12 &&
       imageBuffer.slice(0, 4).toString() === 'RIFF' &&
       imageBuffer.slice(8, 12).toString() === 'WEBP';
@@ -758,11 +788,11 @@ async function extractFlightDetailsFromImages(images) {
       // Truncated base64 might decode but not have valid image headers
       const lastBytes = imageBuffer.slice(-10);
       const looksTruncated = imageBuffer.length < 1000; // Suspiciously small for an image
-      
+
       if (looksTruncated) {
         throw new Error(`Image ${index} appears to be truncated or incomplete. The base64 data is too short (${imageBuffer.length} bytes) or does not contain a valid image header. Please ensure the full image data is provided.`);
       }
-      
+
       throw new Error(`Image ${index} does not appear to be a valid image format (PNG, JPEG, or WebP). The decoded data does not match any known image format headers.`);
     }
 
@@ -845,7 +875,7 @@ SEGMENT CLASSIFICATION RULES:
 - If you see "Flight to Athens" and "Flight to London" on the same booking → it's round_trip
 - Use labels (Outbound, Return, Andata e ritorno, Aller et retour…), logical flow, and airport matching
 Airline: prefer two-letter code near flight number, else full name; if unclear → JSON null (NOT the string "null").
-Flight number: extract the COMPLETE flight number including airline prefix (e.g., "DY816" from Norwegian DY816, "U2123" from United Express U2123, "W46011" from Wizz Air Malta W46011). Include any letters or digits that appear before the numeric part. Examples: "BA553" → "BA553", "DY816" → "DY816", "U2123" → "U2123", "FR100" → "FR100". If unclear → JSON null (NOT the string "null").
+Flight number: extract ONLY the numeric part, excluding the airline prefix (e.g., "816" from Norwegian DY816, "3811" from easyJet U2 3811, "553" from BA553). CRITICAL: Flight numbers can be 1-4 digits long. When you see a space between the airline code and numbers (e.g., "U2 3811"), extract ONLY the numeric part: "U2 3811" becomes "3811" (NOT "U23811" or "U2 2"). The airline prefix (2 letters like "U2", "BA", "DY") should NOT be included. Examples: "BA553" → "553", "DY816" → "816", "U2 3811" → "3811", "LX 1612" → "1612", "FR100" → "100", "W46011" → "6011". Always extract the complete numeric portion - do not truncate or shorten flight numbers. If unclear → JSON null (NOT the string "null").
 Airports: 3-letter IATA; if unclear → JSON null (NOT the string "null").
 Times: 24-hour HH:MM format. CRITICAL TIME EXTRACTION RULES:
 - ALWAYS look for and respect AM/PM indicators in the screenshot
@@ -917,50 +947,50 @@ Return ONLY the JSON object, no extra text.`;
 
     const text = result.response.text() || '';
     console.log('📥 Received response from Gemini API, length:', text.length);
-    
+
     // Try to parse the JSON response
     try {
       const cleanedText = text.replace(/```json\n?|\n?```/g, '').trim();
-      
+
       // Check if the response contains flight-related content
       if (!cleanedText.includes('tripType') && !cleanedText.includes('outboundSegments')) {
         return {
           error: 'No flight details found in the image(s). Please upload a flight booking screenshot or itinerary.'
         };
       }
-      
+
       let parsed = JSON.parse(cleanedText);
       console.log('✅ Successfully parsed JSON');
-      
+
       // Apply post-processing functions
       // 1. Convert airline names to IATA codes
       parsed = convertAirlineNamesToIataCodes(parsed);
       console.log('🔄 Converted airline names to IATA codes');
-      
+
       // 2. Normalize dates to resolve missing years and avoid past dates
       parsed = fixPastDates(parsed, currentYear, currentDate);
       console.log('🔄 Normalized dates');
-      
+
       // 3. Detect round trip pattern if segments form A → B → A
       const isRoundTripPattern = detectRoundTripPattern(
         parsed.outboundSegments || [],
         parsed.returnSegments || []
       );
-      
+
       if (isRoundTripPattern && parsed.tripType !== 'round_trip') {
         console.log('🔄 Detected round trip pattern, updating tripType');
         parsed.tripType = 'round_trip';
-        
+
         // Split segments into outbound and return based on pattern
         const allSegments = [...(parsed.outboundSegments || [])];
         const firstSegment = allSegments[0];
         const origin = firstSegment?.departure;
-        
+
         if (origin) {
           const outboundSegs = [];
           const returnSegs = [];
           let foundReturn = false;
-          
+
           for (const seg of allSegments) {
             if (!foundReturn && seg.arrival !== origin) {
               outboundSegs.push(seg);
@@ -969,12 +999,12 @@ Return ONLY the JSON object, no extra text.`;
               returnSegs.push(seg);
             }
           }
-          
+
           parsed.outboundSegments = outboundSegs;
           parsed.returnSegments = returnSegs;
         }
       }
-      
+
       return parsed;
     } catch (parseError) {
       console.error('❌ Failed to parse JSON response:', parseError);
@@ -996,7 +1026,7 @@ Return ONLY the JSON object, no extra text.`;
         error: 'The image could not be processed by Gemini. The image data may be corrupted, truncated, or in an unsupported format. Please ensure the image is a valid PNG, JPEG, or WebP file and try again. If the problem persists, the image may be too large or corrupted.',
         extractedData: {
           error: 'Failed to analyze images: Unable to process input image',
-          details: '[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent: [400 Bad Request] Unable to process input image. Please retry or report in https://developers.generativeai.google/guide/troubleshooting'
+          details: '[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent: [400 Bad Request] Unable to process input image. Please retry or report in https://developers.generativeai.google/guide/troubleshooting'
         }
       };
     }
@@ -1061,9 +1091,18 @@ function fixPastDates(data, currentYear, currentDateISO) {
     if (isoMatch) {
       const [, yearStr, mm, dd] = isoMatch;
       const yearNum = parseInt(yearStr, 10);
-      if (yearNum < currentYear) {
-        console.log(`🔄 Fixing past year in date: ${trimmed} → ${currentYear}-${mm}-${dd}`);
-        return `${currentYear}-${mm}-${dd}`;
+      const monthNum = parseInt(mm, 10);
+      const dayNum = parseInt(dd, 10);
+      
+      // Check if the date is in the past
+      const dateToCheck = new Date(yearNum, monthNum - 1, dayNum);
+      const isPastDate = dateToCheck < today;
+      
+      if (yearNum < currentYear || isPastDate) {
+        // If year is in the past OR the date itself is in the past, move to next year
+        const nextYear = yearNum < currentYear ? currentYear : currentYear + 1;
+        console.log(`🔄 Fixing past date: ${trimmed} → ${nextYear}-${mm}-${dd}`);
+        return `${nextYear}-${mm}-${dd}`;
       }
       return trimmed;
     }
@@ -1162,7 +1201,7 @@ function detectRoundTripPattern(outboundSegments, returnSegments) {
 // Simplified airline code conversion function (fallback only - Phase 2)
 function convertAirlineNameToIataCode(airlineName) {
   if (!airlineName) return '';
-  
+
   // If already a 2-3 letter code, return uppercase
   if ((airlineName.length === 2 || airlineName.length === 3) && /^[A-Z]{2,3}$/i.test(airlineName)) {
     return airlineName.toUpperCase();
@@ -1200,7 +1239,7 @@ function convertAirlineNameToIataCode(airlineName) {
   };
 
   const normalized = airlineName.toLowerCase().trim();
-  
+
   // Direct match
   if (airlineMap[normalized]) {
     return airlineMap[normalized];
@@ -1222,24 +1261,24 @@ function extractAirlineCodeFromFlightNumber(flightNumber) {
   if (!flightNumber || typeof flightNumber !== 'string') {
     return null;
   }
-  
+
   // Normalize: remove spaces, dashes, convert to uppercase
   const normalized = flightNumber.replace(/[\s-]/g, '').toUpperCase().trim();
-  
+
   if (normalized.length < 2) {
     return null;
   }
-  
+
   // Extract first 2 characters
   const firstTwo = normalized.substring(0, 2);
-  
+
   // Check if at least one character is a letter
   const hasLetter = /[A-Z]/.test(firstTwo);
-  
+
   if (!hasLetter) {
     return null;
   }
-  
+
   // Return the 2-character code
   return firstTwo;
 }
@@ -1249,10 +1288,10 @@ function cleanFlightNumber(flightNumber) {
   if (!flightNumber || typeof flightNumber !== 'string') {
     return '';
   }
-  
+
   // Normalize: remove spaces, dashes, convert to uppercase
   const normalized = flightNumber.replace(/[\s-]/g, '').toUpperCase().trim();
-  
+
   // Extract numeric part (everything after the airline code prefix)
   // Match pattern: 2-3 letters followed by numbers
   const match = normalized.match(/^[A-Z]{2,3}(\d+)$/);
@@ -1261,13 +1300,13 @@ function cleanFlightNumber(flightNumber) {
     // Strip leading zeros but keep at least one digit
     return numericPart.replace(/^0+/, '') || '0';
   }
-  
+
   // Fallback: extract all digits if no letter prefix found
   const allDigits = normalized.replace(/\D/g, '');
   if (allDigits) {
     return allDigits.replace(/^0+/, '') || '0';
   }
-  
+
   return '';
 }
 
@@ -1278,29 +1317,35 @@ function convertAirlineNamesToIataCodes(data) {
   // Process outbound segments
   if (data.outboundSegments && Array.isArray(data.outboundSegments)) {
     data.outboundSegments = data.outboundSegments.map((segment, index) => {
-      // Phase 1: Try to extract airline code from flight number
+      // Primary: Extract airline code from airline name field
       let iataCode = null;
-      let cleanedFlightNumber = segment.flightNumber;
-      
-      if (segment.flightNumber) {
-        iataCode = extractAirlineCodeFromFlightNumber(segment.flightNumber);
-        if (iataCode) {
-          console.log(`  ✈️ Outbound ${index + 1}: Phase 1 - Extracted "${iataCode}" from flight number "${segment.flightNumber}"`);
-          // Clean the flight number by removing the airline prefix
-          cleanedFlightNumber = cleanFlightNumber(segment.flightNumber);
-          if (cleanedFlightNumber !== segment.flightNumber) {
-            console.log(`  ✈️ Outbound ${index + 1}: Cleaned flight number "${segment.flightNumber}" -> "${cleanedFlightNumber}"`);
-          }
-        }
-      }
-      
-      // Phase 2: Fallback to airline name lookup if Phase 1 didn't work
-      if (!iataCode && segment.airline && segment.airline !== 'null' && segment.airline !== 'undefined' && segment.airline !== 'N/A') {
+      if (segment.airline && segment.airline !== 'null' && segment.airline !== 'undefined' && segment.airline !== 'N/A') {
         const originalAirline = segment.airline;
         iataCode = convertAirlineNameToIataCode(segment.airline);
-        console.log(`  ✈️ Outbound ${index + 1}: Phase 2 - Converted "${originalAirline}" -> "${iataCode}"`);
+        if (iataCode) {
+          console.log(`  ✈️ Outbound ${index + 1}: Converted airline name "${originalAirline}" -> "${iataCode}"`);
+        }
       }
-      
+
+      // Fallback: Try to extract from flight number (if airline name lookup failed)
+      // Note: This is a fallback since flight numbers are now numeric-only
+      if (!iataCode && segment.flightNumber) {
+        const extractedCode = extractAirlineCodeFromFlightNumber(segment.flightNumber);
+        if (extractedCode) {
+          console.log(`  ⚠️ Outbound ${index + 1}: Fallback - Extracted "${extractedCode}" from flight number "${segment.flightNumber}" (this shouldn't happen with numeric-only extraction)`);
+          iataCode = extractedCode;
+        }
+      }
+
+      // Clean flight number (should already be numeric-only, but handle edge cases)
+      let cleanedFlightNumber = segment.flightNumber;
+      if (segment.flightNumber) {
+        cleanedFlightNumber = cleanFlightNumber(segment.flightNumber);
+        if (cleanedFlightNumber !== segment.flightNumber) {
+          console.log(`  ✈️ Outbound ${index + 1}: Cleaned flight number "${segment.flightNumber}" -> "${cleanedFlightNumber}"`);
+        }
+      }
+
       return {
         ...segment,
         airline: iataCode || '',
@@ -1312,29 +1357,35 @@ function convertAirlineNamesToIataCodes(data) {
   // Process return segments
   if (data.returnSegments && Array.isArray(data.returnSegments)) {
     data.returnSegments = data.returnSegments.map((segment, index) => {
-      // Phase 1: Try to extract airline code from flight number
+      // Primary: Extract airline code from airline name field
       let iataCode = null;
-      let cleanedFlightNumber = segment.flightNumber;
-      
-      if (segment.flightNumber) {
-        iataCode = extractAirlineCodeFromFlightNumber(segment.flightNumber);
-        if (iataCode) {
-          console.log(`  ✈️ Return ${index + 1}: Phase 1 - Extracted "${iataCode}" from flight number "${segment.flightNumber}"`);
-          // Clean the flight number by removing the airline prefix
-          cleanedFlightNumber = cleanFlightNumber(segment.flightNumber);
-          if (cleanedFlightNumber !== segment.flightNumber) {
-            console.log(`  ✈️ Return ${index + 1}: Cleaned flight number "${segment.flightNumber}" -> "${cleanedFlightNumber}"`);
-          }
-        }
-      }
-      
-      // Phase 2: Fallback to airline name lookup if Phase 1 didn't work
-      if (!iataCode && segment.airline && segment.airline !== 'null' && segment.airline !== 'undefined' && segment.airline !== 'N/A') {
+      if (segment.airline && segment.airline !== 'null' && segment.airline !== 'undefined' && segment.airline !== 'N/A') {
         const originalAirline = segment.airline;
         iataCode = convertAirlineNameToIataCode(segment.airline);
-        console.log(`  ✈️ Return ${index + 1}: Phase 2 - Converted "${originalAirline}" -> "${iataCode}"`);
+        if (iataCode) {
+          console.log(`  ✈️ Return ${index + 1}: Converted airline name "${originalAirline}" -> "${iataCode}"`);
+        }
       }
-      
+
+      // Fallback: Try to extract from flight number (if airline name lookup failed)
+      // Note: This is a fallback since flight numbers are now numeric-only
+      if (!iataCode && segment.flightNumber) {
+        const extractedCode = extractAirlineCodeFromFlightNumber(segment.flightNumber);
+        if (extractedCode) {
+          console.log(`  ⚠️ Return ${index + 1}: Fallback - Extracted "${extractedCode}" from flight number "${segment.flightNumber}" (this shouldn't happen with numeric-only extraction)`);
+          iataCode = extractedCode;
+        }
+      }
+
+      // Clean flight number (should already be numeric-only, but handle edge cases)
+      let cleanedFlightNumber = segment.flightNumber;
+      if (segment.flightNumber) {
+        cleanedFlightNumber = cleanFlightNumber(segment.flightNumber);
+        if (cleanedFlightNumber !== segment.flightNumber) {
+          console.log(`  ✈️ Return ${index + 1}: Cleaned flight number "${segment.flightNumber}" -> "${cleanedFlightNumber}"`);
+        }
+      }
+
       return {
         ...segment,
         airline: iataCode || '',
@@ -1352,12 +1403,12 @@ function isExtractedDataComplete(extractedData) {
   if (!extractedData) {
     return false;
   }
-  
+
   // Check outbound segments
   if (!extractedData.outboundSegments || !Array.isArray(extractedData.outboundSegments) || extractedData.outboundSegments.length === 0) {
     return false;
   }
-  
+
   // Check each outbound segment for required fields
   for (const segment of extractedData.outboundSegments) {
     if (!segment.airline || segment.airline === null) return false;
@@ -1368,13 +1419,13 @@ function isExtractedDataComplete(extractedData) {
     if (!segment.departureTime || segment.departureTime === null) return false;
     if (!segment.arrivalTime || segment.arrivalTime === null) return false;
   }
-  
+
   // Check return segments (for round trips)
   if (extractedData.tripType === 'round_trip') {
     if (!extractedData.returnSegments || !Array.isArray(extractedData.returnSegments) || extractedData.returnSegments.length === 0) {
       return false;
     }
-    
+
     for (const segment of extractedData.returnSegments) {
       if (!segment.airline || segment.airline === null) return false;
       if (!segment.flightNumber || segment.flightNumber === null) return false;
@@ -1385,26 +1436,26 @@ function isExtractedDataComplete(extractedData) {
       if (!segment.arrivalTime || segment.arrivalTime === null) return false;
     }
   }
-  
+
   // Check passenger information (must have at least adults count)
   if (!extractedData.passengers || extractedData.passengers.adults === null || extractedData.passengers.adults === undefined) {
     return false;
   }
-  
+
   // Check cabin class
   if (!extractedData.cabinClass || extractedData.cabinClass === null) {
     return false;
   }
-  
+
   // Check price and currency (required for price comparison)
   if (extractedData.totalPrice === null || extractedData.totalPrice === undefined) {
     return false;
   }
-  
+
   if (!extractedData.currency || extractedData.currency === null) {
     return false;
   }
-  
+
   return true;
 }
 
@@ -1424,7 +1475,7 @@ function transformExtractedToFlightData(extractedData) {
     currency: extractedData.currency || 'EUR',
     location: 'IT'
   };
-  
+
   // Transform outbound segments
   if (extractedData.outboundSegments && extractedData.outboundSegments.length > 0) {
     transformedData.trip.legs.push({
@@ -1440,7 +1491,7 @@ function transformExtractedToFlightData(extractedData) {
       }))
     });
   }
-  
+
   // Transform return segments
   if (extractedData.returnSegments && extractedData.returnSegments.length > 0) {
     transformedData.trip.legs.push({
@@ -1456,7 +1507,7 @@ function transformExtractedToFlightData(extractedData) {
       }))
     });
   }
-  
+
   return transformedData;
 }
 
@@ -1502,9 +1553,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve static files (for logo, etc.)
-app.use(express.static('.'));
-
 // Parse JSON bodies
 app.use(express.json({ limit: '50mb' }));
 
@@ -1516,7 +1564,7 @@ app.use((req, res, next) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'healthy',
     service: 'navifare-mcp',
     version: '0.1.5',
@@ -1660,9 +1708,9 @@ app.get('/mcp', (req, res) => {
         inputSchema: {
           type: 'object',
           properties: {
-            user_request: { 
-              type: 'string', 
-              description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.' 
+            user_request: {
+              type: 'string',
+              description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.'
             }
           },
           required: ['user_request']
@@ -1673,8 +1721,8 @@ app.get('/mcp', (req, res) => {
           properties: {
             message: { type: 'string', description: 'Status message or instructions' },
             needsMoreInfo: { type: 'boolean', description: 'Whether additional information is required' },
-            missingFields: { 
-              type: 'array', 
+            missingFields: {
+              type: 'array',
               description: 'List of missing required fields if needsMoreInfo is true',
               items: { type: 'string' }
             },
@@ -1700,7 +1748,7 @@ app.get('/mcp', (req, res) => {
 // MCP tool invocation endpoint (POST /mcp)
 app.post('/mcp', async (req, res) => {
   console.log('📥 Received MCP request:', JSON.stringify(req.body, null, 2));
-  
+
   try {
     // Validate request format
     if (!req.body || typeof req.body !== 'object') {
@@ -1714,79 +1762,192 @@ app.post('/mcp', async (req, res) => {
       });
       return;
     }
-    
+
     const { method, params } = req.body;
 
-const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+    const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-function parseIsoDate(dateStr) {
-  if (typeof dateStr !== 'string' || !ISO_DATE_REGEX.test(dateStr)) {
-    return null;
-  }
+    function parseIsoDate(dateStr) {
+      if (typeof dateStr !== 'string' || !ISO_DATE_REGEX.test(dateStr)) {
+        return null;
+      }
 
-  const [year, month, day] = dateStr.split('-').map(Number);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const parsed = new Date(Date.UTC(year, month - 1, day));
 
-  if (
-    parsed.getUTCFullYear() !== year ||
-    parsed.getUTCMonth() !== month - 1 ||
-    parsed.getUTCDate() !== day
-  ) {
-    return null;
-  }
+      if (
+        parsed.getUTCFullYear() !== year ||
+        parsed.getUTCMonth() !== month - 1 ||
+        parsed.getUTCDate() !== day
+      ) {
+        return null;
+      }
 
-  return parsed;
-}
-
-function validateTripDates(args) {
-  if (!args?.trip?.legs?.length) {
-    throw new Error('Trip legs are required to search for flights. Please provide at least one leg with complete segment details.');
-  }
-
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-
-  let latestOutboundDate = null;
-  let earliestReturnDate = null;
-
-  args.trip.legs.forEach((leg, legIndex) => {
-    if (!leg?.segments?.length) {
-      throw new Error(`Leg ${legIndex + 1} is missing flight segments. Please include the airline, flight number, airports, and dates for each segment.`);
+      return parsed;
     }
 
-    leg.segments.forEach((segment, segmentIndex) => {
-      const context = `leg ${legIndex + 1}, segment ${segmentIndex + 1}`;
-      const dateStr = segment?.departureDate;
-      const parsedDate = parseIsoDate(dateStr || '');
-
-      if (!parsedDate) {
-        throw new Error(`Invalid departureDate for ${context}. Dates must use YYYY-MM-DD format and represent a real calendar date.`);
+    function validateTripDates(args) {
+      if (!args?.trip?.legs?.length) {
+        throw new Error('Trip legs are required to search for flights. Please provide at least one leg with complete segment details.');
       }
 
-      if (parsedDate.getTime() < today.getTime()) {
-        throw new Error(`The departure date ${dateStr} in ${context} is in the past. Please provide a future date to continue.`);
-      }
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
 
-      if (legIndex === 0) {
-        if (!latestOutboundDate || parsedDate.getTime() > latestOutboundDate.getTime()) {
-          latestOutboundDate = parsedDate;
+      let latestOutboundDate = null;
+      let earliestReturnDate = null;
+
+      args.trip.legs.forEach((leg, legIndex) => {
+        if (!leg?.segments?.length) {
+          throw new Error(`Leg ${legIndex + 1} is missing flight segments. Please include the airline, flight number, airports, and dates for each segment.`);
         }
-      } else if (!earliestReturnDate || parsedDate.getTime() < earliestReturnDate.getTime()) {
-        earliestReturnDate = parsedDate;
+
+        leg.segments.forEach((segment, segmentIndex) => {
+          const context = `leg ${legIndex + 1}, segment ${segmentIndex + 1}`;
+          const dateStr = segment?.departureDate;
+          const parsedDate = parseIsoDate(dateStr || '');
+
+          if (!parsedDate) {
+            throw new Error(`Invalid departureDate for ${context}. Dates must use YYYY-MM-DD format and represent a real calendar date.`);
+          }
+
+          if (parsedDate.getTime() < today.getTime()) {
+            throw new Error(`The departure date ${dateStr} in ${context} is in the past. Please provide a future date to continue.`);
+          }
+
+          if (legIndex === 0) {
+            if (!latestOutboundDate || parsedDate.getTime() > latestOutboundDate.getTime()) {
+              latestOutboundDate = parsedDate;
+            }
+          } else if (!earliestReturnDate || parsedDate.getTime() < earliestReturnDate.getTime()) {
+            earliestReturnDate = parsedDate;
+          }
+        });
+      });
+
+      if (
+        earliestReturnDate &&
+        latestOutboundDate &&
+        earliestReturnDate.getTime() < latestOutboundDate.getTime()
+      ) {
+        throw new Error('Return segments must depart on or after the outbound segments. Please adjust the return dates.');
       }
-    });
-  });
+    }
 
-  if (
-    earliestReturnDate &&
-    latestOutboundDate &&
-    earliestReturnDate.getTime() < latestOutboundDate.getTime()
-  ) {
-    throw new Error('Return segments must depart on or after the outbound segments. Please adjust the return dates.');
-  }
-}
+    /**
+     * Validate that the itinerary type is supported by Navifare.
+     * Supported: Round-trip flights where return departs from the same airport where outbound arrived.
+     * NOT supported: One-way trips, open-jaw trips, multi-city trips.
+     */
+    function validateItineraryType(args) {
+      if (!args?.trip?.legs?.length) {
+        throw new Error('Trip legs are required to search for flights.');
+      }
 
-function sanitizeSubmitArgs(rawArgs) {
+      const legs = args.trip.legs;
+
+      // Check for one-way trips (only 1 leg)
+      if (legs.length === 1) {
+        throw new Error(
+          '🚫 One-way flights are not currently supported for price comparison. ' +
+          'We can only search for round-trip itineraries. ' +
+          'Please provide both outbound and return flight details to continue.'
+        );
+      }
+
+      // Check for multi-city trips (more than 2 legs)
+      if (legs.length > 2) {
+        throw new Error(
+          '🚫 Multi-city itineraries are not currently supported for price comparison. ' +
+          'We can only search for simple round-trip flights (one outbound journey + one return journey). ' +
+          'Please provide a standard round-trip itinerary to continue.'
+        );
+      }
+
+      // For round-trips (2 legs), check for open-jaw (return departs from different airport than outbound arrived)
+      if (legs.length === 2) {
+        const outboundLeg = legs[0];
+        const returnLeg = legs[1];
+
+        if (!outboundLeg?.segments?.length || !returnLeg?.segments?.length) {
+          return; // Will be caught by other validation
+        }
+
+        // Get the arrival airport of the last segment in the outbound leg
+        const outboundLastSegment = outboundLeg.segments[outboundLeg.segments.length - 1];
+        const outboundArrivalAirport = outboundLastSegment?.arrivalAirport?.toUpperCase();
+
+        // Get the departure airport of the first segment in the return leg
+        const returnFirstSegment = returnLeg.segments[0];
+        const returnDepartureAirport = returnFirstSegment?.departureAirport?.toUpperCase();
+
+        // Check if they match
+        if (outboundArrivalAirport && returnDepartureAirport && outboundArrivalAirport !== returnDepartureAirport) {
+          // Check if they might be airports in the same city (e.g., FCO vs CIA in Rome)
+          const cityAirportGroups = {
+            'ROM': ['FCO', 'CIA', 'ROM'],      // Rome
+            'MIL': ['MXP', 'LIN', 'BGY', 'MIL'], // Milan
+            'LON': ['LHR', 'LGW', 'STN', 'LTN', 'LCY', 'LON'], // London
+            'PAR': ['CDG', 'ORY', 'PAR'],      // Paris
+            'NYC': ['JFK', 'LGA', 'EWR', 'NYC'], // New York
+            'BUE': ['EZE', 'AEP', 'BUE'],      // Buenos Aires
+            'SAO': ['GRU', 'CGH', 'SAO'],      // Sao Paulo
+            'TYO': ['NRT', 'HND', 'TYO'],      // Tokyo
+            'SEL': ['ICN', 'GMP', 'SEL'],      // Seoul
+            'CHI': ['ORD', 'MDW', 'CHI'],      // Chicago
+          };
+
+          // Check if both airports are in the same city
+          let sameCity = false;
+          for (const [city, airports] of Object.entries(cityAirportGroups)) {
+            if (airports.includes(outboundArrivalAirport) && airports.includes(returnDepartureAirport)) {
+              sameCity = true;
+              console.log(`ℹ️ Detected same-city airports: ${outboundArrivalAirport} and ${returnDepartureAirport} are both in ${city}`);
+              break;
+            }
+          }
+
+          if (!sameCity) {
+            throw new Error(
+              `🚫 Open-jaw itineraries are not currently supported for price comparison. ` +
+              `Your outbound flight arrives at ${outboundArrivalAirport}, but your return flight departs from ${returnDepartureAirport}. ` +
+              `We can only search for round-trips where you return from the same airport you arrived at. ` +
+              `Please select a different flight option or adjust your itinerary.`
+            );
+          }
+        }
+
+        // Also verify that return arrives near where outbound departed (optional, less strict)
+        const outboundFirstSegment = outboundLeg.segments[0];
+        const outboundDepartureAirport = outboundFirstSegment?.departureAirport?.toUpperCase();
+
+        const returnLastSegment = returnLeg.segments[returnLeg.segments.length - 1];
+        const returnArrivalAirport = returnLastSegment?.arrivalAirport?.toUpperCase();
+
+        if (outboundDepartureAirport && returnArrivalAirport && outboundDepartureAirport !== returnArrivalAirport) {
+          // Check if they're in the same city
+          let sameCity = false;
+          for (const [city, airports] of Object.entries(cityAirportGroups)) {
+            if (airports.includes(outboundDepartureAirport) && airports.includes(returnArrivalAirport)) {
+              sameCity = true;
+              console.log(`ℹ️ Detected same-city return: departing from ${outboundDepartureAirport}, returning to ${returnArrivalAirport} (both in ${city})`);
+              break;
+            }
+          }
+
+          if (!sameCity) {
+            throw new Error(
+              `🚫 Open-jaw itineraries are not currently supported for price comparison. ` +
+              `Your outbound flight departs from ${outboundDepartureAirport}, but your return flight arrives at ${returnArrivalAirport}. ` +
+              `We can only search for round-trips where you return to the same airport you departed from. ` +
+              `Please select a different flight option or adjust your itinerary.`
+            );
+          }
+        }
+      }
+    }
+
+    function sanitizeSubmitArgs(rawArgs) {
       if (!rawArgs || typeof rawArgs !== 'object') return rawArgs;
       const args = { ...rawArgs };
 
@@ -1853,13 +2014,13 @@ function sanitizeSubmitArgs(rawArgs) {
           if (typeof seg.flightNumber === 'string' && seg.flightNumber) {
             // Check if flight number contains airline prefix (e.g., "XZ2020")
             const airlineFromFlight = extractAirlineCodeFromFlightNumber(seg.flightNumber);
-            
+
             if (airlineFromFlight) {
               // If airline is not a 2-letter code, use the one from flight number
               if (!seg.airline || seg.airline.length !== 2 || !/^[A-Z]{2}$/i.test(seg.airline)) {
                 seg.airline = airlineFromFlight.toUpperCase();
               }
-              
+
               // Clean flight number by removing airline prefix
               seg.flightNumber = cleanFlightNumber(seg.flightNumber);
             } else {
@@ -1868,7 +2029,7 @@ function sanitizeSubmitArgs(rawArgs) {
               if (match) seg.flightNumber = match[0];
             }
           }
-          
+
           // Enforce airline codes to be exactly 2 letters (take first 2 if longer)
           if (typeof seg.airline === 'string' && seg.airline) {
             const normalized = seg.airline.toUpperCase().trim();
@@ -1880,10 +2041,10 @@ function sanitizeSubmitArgs(rawArgs) {
               seg.airline = normalized;
             }
           }
-          
+
           // Ensure plusDays present
           if (!Number.isFinite(seg.plusDays)) seg.plusDays = 0;
-          
+
           // Ensure times are in HH:MM:SS format (backend requires seconds)
           // If times are missing/empty, set to "00:00:00" as a fallback
           if (typeof seg.departureTime === 'string') {
@@ -1895,7 +2056,7 @@ function sanitizeSubmitArgs(rawArgs) {
           } else if (!seg.departureTime) {
             seg.departureTime = '00:00:00';
           }
-          
+
           if (typeof seg.arrivalTime === 'string') {
             if (seg.arrivalTime.length === 5) {
               seg.arrivalTime = seg.arrivalTime + ':00'; // "14:10" -> "14:10:00"
@@ -1908,9 +2069,10 @@ function sanitizeSubmitArgs(rawArgs) {
         }
       }
 
-  validateTripDates(args);
+      validateTripDates(args);
+      validateItineraryType(args);
 
-  return args;
+      return args;
     }
 
     function generateTripSummary(flightData) {
@@ -1921,14 +2083,14 @@ function sanitizeSubmitArgs(rawArgs) {
       try {
         const firstLeg = flightData.trip.legs[0];
         const lastLeg = flightData.trip.legs[flightData.trip.legs.length - 1];
-        
+
         if (!firstLeg.segments || !lastLeg.segments || firstLeg.segments.length === 0 || lastLeg.segments.length === 0) {
           return null;
         }
 
         const firstSegment = firstLeg.segments[0];
         const lastSegment = lastLeg.segments[lastLeg.segments.length - 1];
-        
+
         // Build route string
         let route;
         if (flightData.trip.legs.length === 1) {
@@ -1938,25 +2100,25 @@ function sanitizeSubmitArgs(rawArgs) {
           // Round-trip or multi-city
           route = `${firstSegment.departureAirport} ⇄ ${lastSegment.arrivalAirport}`;
         }
-        
+
         // Format date
         const departureDate = new Date(firstSegment.departureDate);
-        const formattedDate = departureDate.toLocaleDateString('en-US', { 
-          weekday: 'short', 
-          month: 'short', 
-          day: 'numeric' 
+        const formattedDate = departureDate.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric'
         });
-        
+
         // Build passenger string
         const adults = flightData.trip.adults || 0;
         const children = flightData.trip.children || 0;
         const infants = (flightData.trip.infantsInSeat || 0) + (flightData.trip.infantsOnLap || 0);
-        
+
         let passengers = '';
         if (adults > 0) passengers += `${adults} adult${adults !== 1 ? 's' : ''}`;
         if (children > 0) passengers += `${passengers ? ', ' : ''}${children} child${children !== 1 ? 'ren' : ''}`;
         if (infants > 0) passengers += `${passengers ? ', ' : ''}${infants} infant${infants !== 1 ? 's' : ''}`;
-        
+
         // Travel class
         const travelClass = flightData.trip.travelClass?.toLowerCase().replace('_', ' ') || 'economy';
         const capitalizedClass = travelClass.charAt(0).toUpperCase() + travelClass.slice(1);
@@ -1972,7 +2134,7 @@ function sanitizeSubmitArgs(rawArgs) {
         return null;
       }
     }
-    
+
     // Handle MCP initialization
     if (method === 'initialize') {
       console.log('🤝 Handling initialize request');
@@ -1995,14 +2157,14 @@ function sanitizeSubmitArgs(rawArgs) {
       });
       return;
     }
-    
+
     // Handle notifications (no response needed)
     if (method === 'notifications/initialized' || method === 'initialized') {
       console.log('✅ Initialization complete');
       res.status(200).end();
       return;
     }
-    
+
     // Handle MCP protocol methods
     if (method === 'tools/list') {
       // Return list of available tools directly
@@ -2136,9 +2298,9 @@ function sanitizeSubmitArgs(rawArgs) {
           inputSchema: {
             type: 'object',
             properties: {
-              user_request: { 
-                type: 'string', 
-                description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.' 
+              user_request: {
+                type: 'string',
+                description: 'Flight details in natural language text. Include all available information: flight numbers, airlines, departure/arrival airports and times, dates, prices, passenger counts, and travel class. Example: "I found flight AZ 573 from ZRH to FCO on November 19th at 7:15 PM, arriving at 8:45 PM, for 200 EUR. Round trip returning AZ 572 from FCO to ZRH on November 22nd at 8:20 AM, arriving at 9:55 AM." If responding to a needsMoreInfo request, include the complete previous flight details along with the missing information.'
               }
             },
             required: ['user_request']
@@ -2149,8 +2311,8 @@ function sanitizeSubmitArgs(rawArgs) {
             properties: {
               message: { type: 'string', description: 'Status message or instructions' },
               needsMoreInfo: { type: 'boolean', description: 'Whether additional information is required' },
-              missingFields: { 
-                type: 'array', 
+              missingFields: {
+                type: 'array',
                 description: 'List of missing required fields if needsMoreInfo is true',
                 items: { type: 'string' }
               },
@@ -2170,7 +2332,7 @@ function sanitizeSubmitArgs(rawArgs) {
           }
         }
       ];
-      
+
       res.json({
         jsonrpc: '2.0',
         id: req.body.id,
@@ -2180,35 +2342,35 @@ function sanitizeSubmitArgs(rawArgs) {
       });
       return;
     }
-    
+
     if (method === 'tools/call') {
       const { name, arguments: args } = params;
-      
+
       // Detect if this is a ChatGPT request (has OpenAI metadata)
-      const isChatGptRequest = params._meta && 
-                               typeof params._meta === 'object' && 
-                               (params._meta['openai/userAgent'] || params._meta['openai/userLocation']);
-      
+      const isChatGptRequest = params._meta &&
+        typeof params._meta === 'object' &&
+        (params._meta['openai/userAgent'] || params._meta['openai/userLocation']);
+
       // Hardcode location to "ZZ" ONLY for ChatGPT requests
       if (isChatGptRequest && (name === 'search_flights' || name === 'submit_session')) {
         args.location = 'ZZ';
         console.log(`✅ Set location to "ZZ" for ChatGPT request`);
       }
-      
+
       console.log(`🔧 Calling tool: ${name}`);
       console.log('📝 Arguments:', JSON.stringify(args, null, 2));
-      
+
       // Detect if client wants streaming (SSE)
-      const wantsStreaming = req.headers['accept']?.includes('text/event-stream') || 
-                             req.query.stream === 'true' ||
-                             req.headers['mcp-stream'] === 'true';
-      
+      const wantsStreaming = req.headers['accept']?.includes('text/event-stream') ||
+        req.query.stream === 'true' ||
+        req.headers['mcp-stream'] === 'true';
+
       // Session management
-      const sessionId = req.headers['mcp-session-id'] || 
-                        `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
+      const sessionId = req.headers['mcp-session-id'] ||
+        `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
       let result;
-      
+
       // DEACTIVATED: Image extraction tool handler (commented out but kept for future use)
       /*
       if (name === 'extract_flight_from_image') {
@@ -2404,16 +2566,16 @@ function sanitizeSubmitArgs(rawArgs) {
       */
       if (name === 'format_flight_pricecheck_request') {
         console.log('🚀 Starting format_flight_pricecheck_request...');
-        
+
         // Validate that we have user_request
         if (!args.user_request) {
           throw new Error('user_request must be provided');
         }
-        
+
         // Parse the user's natural language request (which may contain pasted extracted data)
         const parsedRequest = await parseFlightRequest(args.user_request);
         console.log('📊 Parsed request result:', parsedRequest.needsMoreInfo ? 'Needs more info' : 'Ready to proceed');
-        
+
         if (parsedRequest.needsMoreInfo) {
           result = {
             message: parsedRequest.message + ' IMPORTANT: When providing the missing information, include the complete previous flight details (paste the full extracted data or previous request) along with the missing fields, as this tool does not retain context between calls.',
@@ -2424,20 +2586,20 @@ function sanitizeSubmitArgs(rawArgs) {
           // Flight information parsed successfully - return formatted flightData for flight_pricecheck
           console.log('✅ Flight information parsed successfully!');
           console.log('📊 Parsed flight data:', JSON.stringify(parsedRequest.flightData, null, 2));
-          
+
           // Determine source based on whether the request contains extracted data indicators
-          const source = (args.user_request.includes('extracted') || args.user_request.includes('{"tripType"') || args.user_request.includes('outboundSegments')) 
-            ? 'IMAGE_EXTRACTION' 
+          const source = (args.user_request.includes('extracted') || args.user_request.includes('{"tripType"') || args.user_request.includes('outboundSegments'))
+            ? 'IMAGE_EXTRACTION'
             : 'MCP';
-          
+
           // Prepare flightData exactly as flight_pricecheck will use it
           const flightData = {
             ...parsedRequest.flightData,
             source: source
           };
-          
+
           console.log('📤 Formatted flightData for flight_pricecheck:', JSON.stringify(flightData, null, 2));
-          
+
           result = {
             message: 'Flight details parsed and formatted successfully! Use the flightData below to call flight_pricecheck.',
             flightData: flightData,
@@ -2446,7 +2608,7 @@ function sanitizeSubmitArgs(rawArgs) {
         }
       } else if (name === 'flight_pricecheck') {
         console.log('🔍 Processing flight_pricecheck tool...');
-        
+
         // The args now directly contain trip, source, price, currency, location
         // Support both old format (flightData) and new format (direct properties)
         const searchData = args.flightData || {
@@ -2456,35 +2618,37 @@ function sanitizeSubmitArgs(rawArgs) {
           currency: args.currency,
           location: args.location
         };
-        
+
         console.log('📤 Search flights payload:', JSON.stringify(searchData, null, 2));
-        
+
         // If streaming is requested, use SSE
         if (wantsStreaming) {
           console.log('📡 Using SSE streaming mode');
-          
+
           // Set SSE headers
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
           res.setHeader('Mcp-Session-Id', sessionId);
-          
+
           // Send initial connection event
           res.write(`: connected\n`);
           res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
-          
+
           try {
             // Transform to API format and sanitize the request
             const apiRequest = transformToApiFormat(searchData);
+            console.log('📤 [SSE] API Request after transformation:', JSON.stringify(apiRequest, null, 2));
             const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
-            
+            console.log('📤 [SSE] API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
+
             // Define progress callback to stream results as they appear
             const onProgress = (progressResults) => {
               const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
               const status = progressResults.status || 'IN_PROGRESS';
-              
+
               console.log(`📤 Streaming ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
-              
+
               // Send progress event via SSE
               const progressEvent = {
                 jsonrpc: '2.0',
@@ -2499,17 +2663,17 @@ function sanitizeSubmitArgs(rawArgs) {
                   }
                 }
               };
-              
+
               res.write(`event: progress\ndata: ${JSON.stringify(progressEvent)}\n\n`);
             };
-            
+
             const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
             console.log('✅ Search complete:', JSON.stringify(searchResult, null, 2));
-            
+
             // Format message to display each offer on its own line
             const resultCount = searchResult.totalResults || searchResult.results?.length || 0;
             let formattedMessage = `Flight price search completed! Found ${resultCount} result(s):\n\n`;
-            
+
             if (searchResult.results && searchResult.results.length > 0) {
               searchResult.results.forEach((offer, index) => {
                 const rank = offer.rank || index + 1;
@@ -2517,7 +2681,7 @@ function sanitizeSubmitArgs(rawArgs) {
                 const website = offer.website || 'Unknown';
                 const bookingUrl = offer.bookingUrl || '';
                 const fareType = offer.fareType || '';
-                
+
                 formattedMessage += `${rank}. ${website} - ${price}`;
                 if (fareType) {
                   formattedMessage += ` (${fareType})`;
@@ -2530,14 +2694,14 @@ function sanitizeSubmitArgs(rawArgs) {
             } else {
               formattedMessage += 'No results found.\n';
             }
-            
+
             const finalResult = {
               message: formattedMessage.trim(),
               searchResult: searchResult,
               status: searchResult.status || 'COMPLETED'
             };
-            
-            // Send final result as SSE event
+
+            // Send final result as SSE event in MCP-compliant format
             const response = {
               jsonrpc: '2.0',
               id: req.body.id,
@@ -2547,14 +2711,15 @@ function sanitizeSubmitArgs(rawArgs) {
                     type: 'text',
                     text: JSON.stringify(finalResult, null, 2)
                   }
-                ]
+                ],
+                isError: false
               }
             };
-            
+
             res.write(`event: complete\ndata: ${JSON.stringify(response)}\n\n`);
             res.end();
             return;
-            
+
           } catch (apiError) {
             console.error('❌ API Error:', apiError);
             const errorResponse = {
@@ -2578,26 +2743,26 @@ function sanitizeSubmitArgs(rawArgs) {
             console.log('📤 API Request after transformation:', JSON.stringify(apiRequest, null, 2));
             const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
             console.log('📤 API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
-            
+
             // Set session header even for non-streaming
             res.setHeader('Mcp-Session-Id', sessionId);
-            
+
             // Define progress callback to stream results as they appear
             const onProgress = (progressResults) => {
               // Send progress notification via notifications/message
               const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
               const status = progressResults.status || 'IN_PROGRESS';
-              
+
               console.log(`📤 Streaming ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
             };
-            
+
             const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
             console.log('✅ Search complete:', JSON.stringify(searchResult, null, 2));
-            
+
             // Format message to display each offer on its own line
             const resultCount = searchResult.totalResults || searchResult.results?.length || 0;
             let formattedMessage = `Flight price search completed! Found ${resultCount} result(s):\n\n`;
-            
+
             if (searchResult.results && searchResult.results.length > 0) {
               searchResult.results.forEach((offer, index) => {
                 const rank = offer.rank || index + 1;
@@ -2605,7 +2770,7 @@ function sanitizeSubmitArgs(rawArgs) {
                 const website = offer.website || 'Unknown';
                 const bookingUrl = offer.bookingUrl || '';
                 const fareType = offer.fareType || '';
-                
+
                 formattedMessage += `${rank}. ${website} - ${price}`;
                 if (fareType) {
                   formattedMessage += ` (${fareType})`;
@@ -2618,7 +2783,7 @@ function sanitizeSubmitArgs(rawArgs) {
             } else {
               formattedMessage += 'No results found.\n';
             }
-            
+
             result = {
               message: formattedMessage.trim(),
               searchResult: searchResult,
@@ -2636,18 +2801,18 @@ function sanitizeSubmitArgs(rawArgs) {
       } else if (name === 'search_flights' || name === 'submit_session') {
         // Handle search_flights and submit_session directly
         console.log(`🔍 Processing ${name} tool...`);
-        
+
         // Detect if this is a ChatGPT request
-        const isChatGptRequest = params._meta && 
-                                 typeof params._meta === 'object' && 
-                                 (params._meta['openai/userAgent'] || params._meta['openai/userLocation']);
-        
+        const isChatGptRequest = params._meta &&
+          typeof params._meta === 'object' &&
+          (params._meta['openai/userAgent'] || params._meta['openai/userLocation']);
+
         // Ensure location is set to ZZ ONLY for ChatGPT requests (should already be set above, but double-check)
         if (isChatGptRequest && (!args.location || args.location !== 'ZZ')) {
           args.location = 'ZZ';
           console.log(`✅ Forced location to "ZZ" for ChatGPT ${name} request`);
         }
-        
+
         // Sanitize and send to API
         let sanitizedRequest;
         try {
@@ -2658,12 +2823,12 @@ function sanitizeSubmitArgs(rawArgs) {
           console.error('❌ Original args:', JSON.stringify(args, null, 2).substring(0, 1000));
           throw validationError;
         }
-        
+
         try {
           if (name === 'search_flights') {
             // For search_flights, use submit_and_poll_session
             const searchResult = await submit_and_poll_session(sanitizedRequest);
-            
+
             // Format response in OpenAI Apps SDK format with structuredContent
             const structuredContent = {
               request_id: searchResult.request_id,
@@ -2671,7 +2836,7 @@ function sanitizeSubmitArgs(rawArgs) {
               totalResults: searchResult.totalResults || searchResult.results?.length || 0,
               results: searchResult.results || []
             };
-            
+
             result = {
               content: [
                 {
@@ -2679,6 +2844,7 @@ function sanitizeSubmitArgs(rawArgs) {
                   text: `Flight search completed! Found ${structuredContent.totalResults} result(s).`
                 }
               ],
+              isError: false,
               structuredContent: structuredContent,
               _meta: {
                 'openai/outputTemplate': 'ui://widget/flight-results.html',
@@ -2691,7 +2857,7 @@ function sanitizeSubmitArgs(rawArgs) {
           } else {
             // For submit_session, just submit
             const submitResult = await submit_session(sanitizedRequest);
-            
+
             // Format response in OpenAI Apps SDK format
             result = {
               content: [
@@ -2700,6 +2866,7 @@ function sanitizeSubmitArgs(rawArgs) {
                   text: 'Session created successfully'
                 }
               ],
+              isError: false,
               structuredContent: {
                 request_id: submitResult.request_id,
                 status: submitResult.status || 'NEW',
@@ -2723,6 +2890,7 @@ function sanitizeSubmitArgs(rawArgs) {
                 text: `Flight search failed: ${apiError.message}`
               }
             ],
+            isError: true,
             structuredContent: {
               error: true,
               message: apiError.message
@@ -2745,41 +2913,51 @@ function sanitizeSubmitArgs(rawArgs) {
         });
         return;
       }
-      
+
       // Only send JSON response if not streaming (streaming responses are sent above)
       // For flight_pricecheck with streaming, we already sent SSE response above
       // For all other cases (non-streaming or other tools), send JSON
       if (!(wantsStreaming && name === 'flight_pricecheck')) {
         console.log('✅ Tool execution successful');
-        
+
         // Set session header for non-streaming responses
         res.setHeader('Mcp-Session-Id', sessionId);
-        
-        // Format response
+
+        // Format response in MCP-compliant format
         // If result already has structuredContent (ChatGPT format from search_flights/submit_session),
         // use it directly; otherwise wrap it in standard MCP format
-        const response = {
-          jsonrpc: '2.0',
-          id: req.body.id,
-          result: result.structuredContent ? result : {
+        let mcpResult;
+        if (result.structuredContent) {
+          // Result already has proper MCP format with content array
+          mcpResult = result;
+        } else {
+          // Wrap in MCP-compliant format with content array and isError field
+          mcpResult = {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify(result, null, 2)
               }
-            ]
-          }
+            ],
+            isError: !!(result.error || result.status === 'error')
+          };
+        }
+
+        const response = {
+          jsonrpc: '2.0',
+          id: req.body.id,
+          result: mcpResult
         };
-        
+
         // Debug: Log the response being sent
         console.log('📤 Sending response:', JSON.stringify(response, null, 2));
-        
+
         res.json(response);
         return;
       }
       // Streaming responses for flight_pricecheck are handled above and already returned
     }
-    
+
     // Unknown method
     res.status(400).json({
       jsonrpc: '2.0',
@@ -2792,7 +2970,7 @@ function sanitizeSubmitArgs(rawArgs) {
 
   } catch (error) {
     console.error('❌ Error handling MCP request:', error);
-      res.status(500).json({ 
+    res.status(500).json({
       jsonrpc: '2.0',
       id: req.body.id,
       error: {
@@ -2807,9 +2985,9 @@ function sanitizeSubmitArgs(rawArgs) {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Express error:', err);
-  res.status(500).json({ 
+  res.status(500).json({
     error: 'Server error',
-    message: err.message 
+    message: err.message
   });
 });
 
@@ -2828,7 +3006,7 @@ app.listen(PORT, () => {
 ║                                                                ║
 ╚════════════════════════════════════════════════════════════════╝
   `);
-  
+
   console.log('\n📝 Next steps:');
   console.log('   1. Run: ngrok http 2091');
   console.log('   2. Copy the ngrok HTTPS URL');
