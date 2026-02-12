@@ -1,28 +1,29 @@
-# Streamable HTTP Upgrade Guide
+# Streamable HTTP Upgrade Guide - MCP Compliant
 
 ## Current State
 
-Your `http-server.js` currently uses standard HTTP POST with JSON responses. This works but doesn't support streaming for long-running operations.
+✅ **Implementation Complete**: `http-server.js` now fully supports MCP-compliant SSE streaming per specification 2025-06-18.
 
-## What Streamable HTTP Requires
+## What Streamable HTTP Requires (MCP Spec)
 
 Streamable HTTP is an MCP transport that supports:
-1. **JSON responses** for quick operations (already implemented ✅)
-2. **SSE streams** (`text/event-stream`) for long-running tasks with progress updates
-3. **Session management** via `Mcp-Session-Id` header
-4. **Stateless operation** when possible
+1. **JSON responses** for quick operations ✅
+2. **SSE streams** (`text/event-stream`) for long-running tasks with progress updates ✅
+3. **Session management** via `Mcp-Session-Id` header ✅
+4. **Default message events** (no custom event types) ✅
+5. **Standard notifications** (`notifications/progress`) ✅
+6. **Structured content** (both text and structuredContent fields) ✅
 
-## Required Changes
+## Implementation Pattern
 
 ### 1. Detect Streaming Requests
 
-Add header detection to determine if client wants streaming:
-
 ```javascript
 app.post('/mcp', async (req, res) => {
-  const wantsStreaming = req.headers['accept']?.includes('text/event-stream') || 
-                         req.query.stream === 'true';
-  
+  const wantsStreaming = req.headers['accept']?.includes('text/event-stream') ||
+                         req.query.stream === 'true' ||
+                         req.headers['mcp-stream'] === 'true';
+
   if (wantsStreaming && method === 'tools/call' && name === 'flight_pricecheck') {
     // Use SSE streaming
   } else {
@@ -31,45 +32,86 @@ app.post('/mcp', async (req, res) => {
 });
 ```
 
-### 2. Implement SSE Streaming for Long Operations
+### 2. Implement MCP-Compliant SSE Streaming
 
-For `flight_pricecheck`, stream progress updates:
+For `flight_pricecheck`, stream progress updates using standard MCP methods:
 
 ```javascript
 if (wantsStreaming) {
-  // Set SSE headers
+  // Set MCP-compliant SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  
-  // Stream progress updates
+  res.setHeader('Mcp-Session-Id', sessionId);
+  res.setHeader('MCP-Protocol-Version', '2025-06-18');
+
+  // Extract progressToken from request _meta (if provided)
+  const progressToken = params._meta?.progressToken;
+
+  // Stream progress updates using standard MCP notifications/progress
+  let progressCount = 0;
   const onProgress = (progressResults) => {
-    const event = {
-      type: 'progress',
-      data: progressResults
-    };
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
+    const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
+    const status = progressResults.status || 'IN_PROGRESS';
+
+    // Only send progress notifications if client provided progressToken
+    if (progressToken) {
+      progressCount = resultCount;
+      const progressNotification = {
+        jsonrpc: '2.0',
+        method: 'notifications/progress',  // Standard MCP method
+        params: {
+          progressToken: progressToken,
+          progress: resultCount,
+          total: 100,  // Estimated total
+          message: `Found ${resultCount} booking sources (status: ${status})`
+        }
+      };
+
+      // MCP spec: send as default message event (no event: field)
+      res.write(`data: ${JSON.stringify(progressNotification)}\n\n`);
+    }
   };
-  
+
   try {
     const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
-    
-    // Send final result
-    res.write(`data: ${JSON.stringify({
-      type: 'complete',
-      data: {
-        message: formattedMessage.trim(),
-        searchResult: searchResult,
-        status: searchResult.status || 'COMPLETED'
+
+    // Format final result
+    const finalResult = {
+      message: formattedMessage.trim(),
+      searchResult: searchResult,
+      status: searchResult.status || 'COMPLETED'
+    };
+
+    // Send final JSON-RPC response with both text and structuredContent
+    const response = {
+      jsonrpc: '2.0',
+      id: req.body.id,
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(finalResult, null, 2)  // For backwards compatibility
+          }
+        ],
+        structuredContent: finalResult  // For modern clients
       }
-    })}\n\n`);
-    
+    };
+
+    // MCP spec: send final response as default message event, then close stream
+    res.write(`data: ${JSON.stringify(response)}\n\n`);
     res.end();
   } catch (error) {
-    res.write(`data: ${JSON.stringify({
-      type: 'error',
-      error: error.message
-    })}\n\n`);
+    // Send error response (also as default message event)
+    const errorResponse = {
+      jsonrpc: '2.0',
+      id: req.body.id,
+      error: {
+        code: -32603,
+        message: error.message
+      }
+    };
+    res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
     res.end();
   }
 } else {
