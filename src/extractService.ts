@@ -123,7 +123,14 @@ If you cannot clearly identify specific flight information from the image:
 - Set flightNumber to null (not made-up numbers like "1613") 
 - Set departure/arrival to null (not codes like "MXP", "ZRH")
 - Set times to null (not times like "10:40", "11:40")
-- **DATES: If a date is clearly visible but the year is missing, compare month/day to today (${currentDate}). If month/day is later than today, use ${currentYear}; if earlier than today, use ${currentYear + 1}. If a date shows a past year OR if the date (even with current year) is in the past, replace it with ${currentYear + 1} (next year). If no date is visible or unclear, set to null. Dates must never be in the past.**
+- **DATES: If a date is clearly visible but the year is missing, infer the year as follows:
+  * If month/day is LATER than today (${currentDate}) → use ${currentYear}
+  * If month/day is THE SAME as today → use ${currentYear}
+  * If month/day is earlier than today → use ${currentYear + 1} (next year)
+  * CRITICAL CONSISTENCY RULE: For round-trip flights, if the outbound date gets assigned next year (${currentYear + 1}), ALL return flight dates must also use next year (${currentYear + 1}) for consistency, regardless of their month/day comparison to today.
+  * Example: If today is 2026-02-13, outbound is Feb 12 (gets 2027 because earlier), and return is Feb 21 (later than today), the return should STILL use 2027 (not 2026) to maintain consistency with the outbound year.
+  * DAY-OF-WEEK VALIDATION: If the screenshot shows a day of week (e.g., "Thu 12 Feb", "Do 12. Feb", "Thursday"), verify your inferred year makes the date fall on that day of week. If not, try the other year (current vs next year). For example: if you see "Thu 12 Feb" and Feb 12, ${currentYear} is a Thursday, use ${currentYear} (not ${currentYear + 1}).
+  * If no date is visible or unclear, set to null.**
 - Set currency to null (if no currency visible)
 - Set totalPrice to null (if no price visible)
 - IF IT'S CLEAR THAT THE USER DIDN'T PASTE A FLIGHT, RETURN ALL FIELDS TO NULL.
