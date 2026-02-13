@@ -1582,7 +1582,7 @@ app.get('/mcp', (req, res) => {
       {
         name: 'flight_pricecheck',
         title: 'Flight Price Check',
-        description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data.',
+        description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
         readOnlyHint: false,
         destructiveHint: false,
         inputSchema: {
@@ -1702,7 +1702,7 @@ app.get('/mcp', (req, res) => {
       {
         name: 'format_flight_pricecheck_request',
         title: 'Format Flight Request',
-        description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
+        description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes are NOT supported.',
         readOnlyHint: true,
         destructiveHint: false,
         inputSchema: {
@@ -2172,7 +2172,7 @@ app.post('/mcp', async (req, res) => {
         {
           name: 'flight_pricecheck',
           title: 'Flight Price Check',
-          description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data.',
+          description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
           readOnlyHint: false,
           destructiveHint: false,
           inputSchema: {
@@ -2292,7 +2292,7 @@ app.post('/mcp', async (req, res) => {
         {
           name: 'format_flight_pricecheck_request',
           title: 'Format Flight Request',
-          description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
+          description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes are NOT supported.',
           readOnlyHint: true,
           destructiveHint: false,
           inputSchema: {
@@ -2588,24 +2588,78 @@ app.post('/mcp', async (req, res) => {
           console.log('✅ Flight information parsed successfully!');
           console.log('📊 Parsed flight data:', JSON.stringify(parsedRequest.flightData, null, 2));
 
-          // Determine source based on whether the request contains extracted data indicators
-          const source = (args.user_request.includes('extracted') || args.user_request.includes('{"tripType"') || args.user_request.includes('outboundSegments'))
-            ? 'IMAGE_EXTRACTION'
-            : 'MCP';
+          // Validate trip type (round-trip only, no one-way or open-jaw)
+          const legs = parsedRequest.flightData?.trip?.legs;
+          if (!legs || !Array.isArray(legs)) {
+            result = {
+              message: 'Invalid trip data: missing legs array.',
+              needsMoreInfo: true,
+              missingFields: ['trip.legs']
+            };
+          } else if (legs.length === 1) {
+            // One-way trip detected
+            result = {
+              message: 'Sorry, Navifare currently only supports round-trip flights. One-way flight price checking is not available yet. Please provide both outbound and return flight details for a round-trip itinerary.',
+              needsMoreInfo: false,
+              error: 'ONE_WAY_NOT_SUPPORTED',
+              readyForPriceCheck: false
+            };
+          } else if (legs.length >= 2) {
+            // Check for open-jaw trips
+            const outboundSegments = legs[0]?.segments;
+            const returnSegments = legs[legs.length - 1]?.segments;
 
-          // Prepare flightData exactly as flight_pricecheck will use it
-          const flightData = {
-            ...parsedRequest.flightData,
-            source: source
-          };
+            if (outboundSegments?.length > 0 && returnSegments?.length > 0) {
+              const outboundOrigin = outboundSegments[0]?.departureAirport;
+              const outboundDestination = outboundSegments[outboundSegments.length - 1]?.arrivalAirport;
+              const returnOrigin = returnSegments[0]?.departureAirport;
+              const returnDestination = returnSegments[returnSegments.length - 1]?.arrivalAirport;
 
-          console.log('📤 Formatted flightData for flight_pricecheck:', JSON.stringify(flightData, null, 2));
+              if (returnOrigin !== outboundDestination || returnDestination !== outboundOrigin) {
+                // Open-jaw trip detected
+                result = {
+                  message: `Sorry, Navifare currently only supports round-trip flights with the same origin and destination. Open-jaw routes are not supported. Your itinerary goes from ${outboundOrigin} to ${outboundDestination}, but returns from ${returnOrigin} to ${returnDestination}. For a valid round-trip, the return flight must depart from ${outboundDestination} and arrive at ${outboundOrigin}.`,
+                  needsMoreInfo: false,
+                  error: 'OPEN_JAW_NOT_SUPPORTED',
+                  readyForPriceCheck: false
+                };
+              } else {
+                // Valid round-trip, proceed
+                // Determine source based on whether the request contains extracted data indicators
+                const source = (args.user_request.includes('extracted') || args.user_request.includes('{"tripType"') || args.user_request.includes('outboundSegments'))
+                  ? 'IMAGE_EXTRACTION'
+                  : 'MCP';
 
-          result = {
-            message: 'Flight details parsed and formatted successfully! Use the flightData below to call flight_pricecheck.',
-            flightData: flightData,
-            readyForPriceCheck: true
-          };
+                // Prepare flightData exactly as flight_pricecheck will use it
+                const flightData = {
+                  ...parsedRequest.flightData,
+                  source: source
+                };
+
+                console.log('📤 Formatted flightData for flight_pricecheck:', JSON.stringify(flightData, null, 2));
+
+                result = {
+                  message: 'Flight details parsed and formatted successfully! Use the flightData below to call flight_pricecheck.',
+                  flightData: flightData,
+                  readyForPriceCheck: true
+                };
+              }
+            } else {
+              // Missing segments data
+              result = {
+                message: 'Invalid trip data: missing segment information.',
+                needsMoreInfo: true,
+                missingFields: ['segments']
+              };
+            }
+          } else {
+            // No legs or invalid legs length
+            result = {
+              message: 'Invalid trip data: expected at least 2 legs for a round-trip.',
+              needsMoreInfo: true,
+              missingFields: ['trip.legs']
+            };
+          }
         }
       } else if (name === 'flight_pricecheck') {
         console.log('🔍 Processing flight_pricecheck tool...');
@@ -2621,6 +2675,33 @@ app.post('/mcp', async (req, res) => {
         };
 
         console.log('📤 Search flights payload:', JSON.stringify(searchData, null, 2));
+
+        // Validate trip type (round-trip only, no one-way or open-jaw)
+        const legs = searchData?.trip?.legs;
+        if (!legs || !Array.isArray(legs)) {
+          throw new Error('Invalid trip data: missing legs array');
+        } else if (legs.length === 1) {
+          throw new Error('Sorry, Navifare currently only supports round-trip flights. One-way flight price checking is not available yet.');
+        } else if (legs.length >= 2) {
+          // Check for open-jaw trips
+          const outboundSegments = legs[0]?.segments;
+          const returnSegments = legs[legs.length - 1]?.segments;
+
+          if (outboundSegments?.length > 0 && returnSegments?.length > 0) {
+            const outboundOrigin = outboundSegments[0]?.departureAirport;
+            const outboundDestination = outboundSegments[outboundSegments.length - 1]?.arrivalAirport;
+            const returnOrigin = returnSegments[0]?.departureAirport;
+            const returnDestination = returnSegments[returnSegments.length - 1]?.arrivalAirport;
+
+            if (returnOrigin !== outboundDestination || returnDestination !== outboundOrigin) {
+              throw new Error(
+                `Sorry, Navifare currently only supports round-trip flights with the same origin and destination. Open-jaw routes are not supported. ` +
+                `Your itinerary goes from ${outboundOrigin} to ${outboundDestination}, but returns from ${returnOrigin} to ${returnDestination}. ` +
+                `For a valid round-trip, the return flight must depart from ${outboundDestination} and arrive at ${outboundOrigin}.`
+              );
+            }
+          }
+        }
 
         // If streaming is requested, use SSE
         if (wantsStreaming) {
