@@ -2782,7 +2782,12 @@ app.post('/mcp', async (req, res) => {
 
             const finalResult = {
               message: formattedMessage.trim(),
-              searchResult: searchResult,
+              searchResult: {
+                ...searchResult,
+                // Include request currency so widget can display prices in correct currency
+                currency: sanitizedRequest.currency || 'USD',
+                requestCurrency: sanitizedRequest.currency || 'USD'
+              },
               status: searchResult.status || 'COMPLETED'
             };
 
@@ -2878,7 +2883,12 @@ app.post('/mcp', async (req, res) => {
 
             result = {
               message: formattedMessage.trim(),
-              searchResult: searchResult,
+              searchResult: {
+                ...searchResult,
+                // Include request currency so widget can display prices in correct currency
+                currency: sanitizedRequest.currency || 'USD',
+                requestCurrency: sanitizedRequest.currency || 'USD'
+              },
               status: searchResult.status || 'COMPLETED'
             };
           } catch (apiError) {
