@@ -2788,7 +2788,11 @@ app.post('/mcp', async (req, res) => {
                 currency: sanitizedRequest.currency || 'USD',
                 requestCurrency: sanitizedRequest.currency || 'USD'
               },
-              status: searchResult.status || 'COMPLETED'
+              status: searchResult.status || 'COMPLETED',
+              // Include user's original price for savings comparison in widget
+              userOriginalPrice: searchData.price || null,
+              userOriginalCurrency: sanitizedRequest.currency || 'USD',
+              userRequestedCurrency: sanitizedRequest.currency || 'USD'
             };
 
             // Send final JSON-RPC response in MCP-compliant format
@@ -2889,7 +2893,11 @@ app.post('/mcp', async (req, res) => {
                 currency: sanitizedRequest.currency || 'USD',
                 requestCurrency: sanitizedRequest.currency || 'USD'
               },
-              status: searchResult.status || 'COMPLETED'
+              status: searchResult.status || 'COMPLETED',
+              // Include user's original price for savings comparison in widget
+              userOriginalPrice: searchData.price || null,
+              userOriginalCurrency: sanitizedRequest.currency || 'USD',
+              userRequestedCurrency: sanitizedRequest.currency || 'USD'
             };
           } catch (apiError) {
             console.error('❌ API Error:', apiError);
