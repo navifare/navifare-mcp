@@ -1588,9 +1588,13 @@ app.get('/mcp', (req, res) => {
         name: 'flight_pricecheck',
         title: 'Flight Price Check',
         description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
-        readOnlyHint: false,
-        destructiveHint: false,
-        openWorldHint: true,
+        annotations: {
+          title: 'Flight Price Check',
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
         inputSchema: {
           type: 'object',
           properties: {
@@ -1709,9 +1713,13 @@ app.get('/mcp', (req, res) => {
         name: 'format_flight_pricecheck_request',
         title: 'Format Flight Request',
         description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes are NOT supported.',
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: true,
+        annotations: {
+          title: 'Format Flight Request',
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
         inputSchema: {
           type: 'object',
           properties: {
@@ -2180,9 +2188,13 @@ app.post('/mcp', async (req, res) => {
           name: 'flight_pricecheck',
           title: 'Flight Price Check',
           description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
-          readOnlyHint: false,
-          destructiveHint: false,
-          openWorldHint: true,
+          annotations: {
+            title: 'Flight Price Check',
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
           inputSchema: {
             type: 'object',
             properties: {
@@ -2301,8 +2313,13 @@ app.post('/mcp', async (req, res) => {
           name: 'format_flight_pricecheck_request',
           title: 'Format Flight Request',
           description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes are NOT supported.',
-          readOnlyHint: true,
-          destructiveHint: false,
+          annotations: {
+            title: 'Format Flight Request',
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
           inputSchema: {
             type: 'object',
             properties: {
