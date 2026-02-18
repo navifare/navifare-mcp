@@ -1978,6 +1978,7 @@ process.stdin.on('data', async (data) => {
                 description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
                 readOnlyHint: false,
                 destructiveHint: false,
+                openWorldHint: true,
                 inputSchema: {
                   type: 'object',
                   properties: {
@@ -2098,6 +2099,7 @@ process.stdin.on('data', async (data) => {
                 description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes are NOT supported.',
                 readOnlyHint: true,
                 destructiveHint: false,
+                openWorldHint: true,
                 inputSchema: {
                   type: 'object',
                   properties: {
