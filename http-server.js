@@ -1590,7 +1590,7 @@ app.get('/mcp', (req, res) => {
         description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
         annotations: {
           title: 'Flight Price Check',
-          readOnlyHint: false,
+          readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
           openWorldHint: true,

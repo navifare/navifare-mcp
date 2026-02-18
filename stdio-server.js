@@ -1978,7 +1978,7 @@ process.stdin.on('data', async (data) => {
                 description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
                 annotations: {
                   title: 'Flight Price Check',
-                  readOnlyHint: false,
+                  readOnlyHint: true,
                   destructiveHint: false,
                   idempotentHint: true,
                   openWorldHint: true,
