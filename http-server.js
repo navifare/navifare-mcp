@@ -1564,7 +1564,7 @@ app.use((req, res, next) => {
 
 // OpenAI domain verification
 app.get('/.well-known/openai-apps-challenge', (req, res) => {
-  res.type('text/plain').send('jXoGZLan_PJe2cfhftlLUwC-Pliq5ZW3j8-EfHRfbx8');
+  res.type('text/plain').send('wP2vAWHhN2AZJ4O25gxXTuZIYvgMvbvAZ9ZbkduNmwA');
 });
 
 // Health check endpoint
