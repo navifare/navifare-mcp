@@ -16,6 +16,7 @@ import { submit_session, get_session_results, submit_and_poll_session } from './
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import sharp from 'sharp';
 import { AI_MODEL } from './src/config/aiModel.js';
+import { recordEvent, mountDashboard } from './dashboard.js';
 
 const app = express();
 const PORT = process.env.PORT || 2091;
@@ -1562,10 +1563,71 @@ app.use((req, res, next) => {
   next();
 });
 
-// OpenAI domain verification
-app.get('/.well-known/openai-apps-challenge', (req, res) => {
-  res.type('text/plain').send('wP2vAWHhN2AZJ4O25gxXTuZIYvgMvbvAZ9ZbkduNmwA');
+// Analytics: track MCP client events
+const _mcpSessions = {};
+app.use((req, res, next) => {
+  if (req.method !== 'POST' || req.path !== '/mcp') return next();
+
+  const body = req.body;
+  if (!body || typeof body !== 'object') return next();
+
+  const clientIp = (req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+  const userAgent = req.headers['user-agent'] || '';
+  const sessionId = req.headers['mcp-session-id'] || '';
+  const method = body.method || '';
+  const params = body.params || {};
+
+  if (method === 'initialize') {
+    const clientInfo = params.clientInfo || {};
+    const clientName = clientInfo.name || 'unknown';
+    const clientVersion = clientInfo.version || '?';
+    const protoVersion = params.protocolVersion || '?';
+
+    // Skip internal traffic
+    if (clientName === 'navifare' || clientName === 'navifare-mcp') return next();
+
+    console.log(`[clients] NEW SESSION ip=${clientIp} client=${clientName}/${clientVersion} protocol=${protoVersion} ua=${userAgent}`);
+    _mcpSessions[`pending:${clientIp}`] = { clientName, clientVersion, ua: userAgent };
+
+    recordEvent({ eventType: 'initialize', clientIp, clientName, clientVersion, userAgent, protocolVersion: protoVersion });
+  } else if (method === 'tools/call') {
+    const toolName = params.name || '?';
+    const args = params.arguments || {};
+    const sess = _mcpSessions[sessionId] || _mcpSessions[`pending:${clientIp}`] || {};
+
+    console.log(`[clients] TOOL CALL ip=${clientIp} client=${sess.clientName || 'unknown'} tool=${toolName}`);
+    recordEvent({
+      eventType: 'tool_call', clientIp, clientName: sess.clientName || 'unknown',
+      clientVersion: sess.clientVersion || '', userAgent: sess.ua || userAgent,
+      sessionId, toolName, toolArgs: args,
+    });
+  } else if (method === 'tools/list') {
+    const sess = _mcpSessions[sessionId] || _mcpSessions[`pending:${clientIp}`] || {};
+    recordEvent({
+      eventType: 'tools_list', clientIp, clientName: sess.clientName || 'unknown',
+      clientVersion: sess.clientVersion || '', userAgent: sess.ua || userAgent, sessionId,
+    });
+  }
+
+  // Capture session ID from response to link pending sessions
+  const origJson = res.json.bind(res);
+  res.json = function(data) {
+    const respSessionId = res.get('Mcp-Session-Id');
+    if (respSessionId) {
+      const pendingKey = `pending:${clientIp}`;
+      if (_mcpSessions[pendingKey]) {
+        _mcpSessions[respSessionId] = _mcpSessions[pendingKey];
+        delete _mcpSessions[pendingKey];
+      }
+    }
+    return origJson(data);
+  };
+
+  next();
 });
+
+// Mount analytics dashboard
+mountDashboard(app);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -1587,14 +1649,9 @@ app.get('/mcp', (req, res) => {
       {
         name: 'flight_pricecheck',
         title: 'Flight Price Check',
-        description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
-        annotations: {
-          title: 'Flight Price Check',
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: true,
-        },
+        description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
+        readOnlyHint: false,
+        destructiveHint: false,
         inputSchema: {
           type: 'object',
           properties: {
@@ -1712,14 +1769,9 @@ app.get('/mcp', (req, res) => {
       {
         name: 'format_flight_pricecheck_request',
         title: 'Format Flight Request',
-        description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes are NOT supported.',
-        annotations: {
-          title: 'Format Flight Request',
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: true,
-        },
+        description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
+        readOnlyHint: true,
+        destructiveHint: false,
         inputSchema: {
           type: 'object',
           properties: {
@@ -2187,14 +2239,9 @@ app.post('/mcp', async (req, res) => {
         {
           name: 'flight_pricecheck',
           title: 'Flight Price Check',
-          description: 'Search multiple booking sources to find better prices for a specific flight. IMPORTANT: You MUST call format_flight_pricecheck_request FIRST to parse the user\'s flight details into the required format, then use the returned flightData to call this tool. Do NOT call this tool directly with manually formatted data. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes (where return origin/destination differs from outbound) are NOT supported.',
-          annotations: {
-            title: 'Flight Price Check',
-            readOnlyHint: true,
-            destructiveHint: false,
-            idempotentHint: true,
-            openWorldHint: true,
-          },
+          description: 'Search multiple booking sources to find better prices for a specific flight the user has already found. Compares prices across different booking platforms to find cheaper alternatives for the exact same flight details.',
+          readOnlyHint: false,
+          destructiveHint: false,
           inputSchema: {
             type: 'object',
             properties: {
@@ -2312,14 +2359,9 @@ app.post('/mcp', async (req, res) => {
         {
           name: 'format_flight_pricecheck_request',
           title: 'Format Flight Request',
-          description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete. LIMITATIONS: Only round-trip flights are supported. One-way flights and open-jaw routes are NOT supported.',
-          annotations: {
-            title: 'Format Flight Request',
-            readOnlyHint: true,
-            destructiveHint: false,
-            idempotentHint: true,
-            openWorldHint: true,
-          },
+          description: 'Parse and format flight details from natural language text or transcribed image content. Extracts flight information (airlines, flight numbers, dates, airports, prices) and structures it for price comparison. Returns formatted flight data ready for flight_pricecheck, or requests missing information if incomplete.',
+          readOnlyHint: true,
+          destructiveHint: false,
           inputSchema: {
             type: 'object',
             properties: {
@@ -2385,8 +2427,7 @@ app.post('/mcp', async (req, res) => {
       console.log(`🔧 Calling tool: ${name}`);
       console.log('📝 Arguments:', JSON.stringify(args, null, 2));
 
-      // Detect if client wants streaming (SSE) - per MCP Streamable HTTP spec
-      // Client MUST include Accept header listing both application/json and text/event-stream
+      // Detect if client wants streaming (SSE)
       const wantsStreaming = req.headers['accept']?.includes('text/event-stream') ||
         req.query.stream === 'true' ||
         req.headers['mcp-stream'] === 'true';
@@ -2613,78 +2654,24 @@ app.post('/mcp', async (req, res) => {
           console.log('✅ Flight information parsed successfully!');
           console.log('📊 Parsed flight data:', JSON.stringify(parsedRequest.flightData, null, 2));
 
-          // Validate trip type (round-trip only, no one-way or open-jaw)
-          const legs = parsedRequest.flightData?.trip?.legs;
-          if (!legs || !Array.isArray(legs)) {
-            result = {
-              message: 'Invalid trip data: missing legs array.',
-              needsMoreInfo: true,
-              missingFields: ['trip.legs']
-            };
-          } else if (legs.length === 1) {
-            // One-way trip detected
-            result = {
-              message: 'Sorry, Navifare currently only supports round-trip flights. One-way flight price checking is not available yet. Please provide both outbound and return flight details for a round-trip itinerary.',
-              needsMoreInfo: false,
-              error: 'ONE_WAY_NOT_SUPPORTED',
-              readyForPriceCheck: false
-            };
-          } else if (legs.length >= 2) {
-            // Check for open-jaw trips
-            const outboundSegments = legs[0]?.segments;
-            const returnSegments = legs[legs.length - 1]?.segments;
+          // Determine source based on whether the request contains extracted data indicators
+          const source = (args.user_request.includes('extracted') || args.user_request.includes('{"tripType"') || args.user_request.includes('outboundSegments'))
+            ? 'IMAGE_EXTRACTION'
+            : 'MCP';
 
-            if (outboundSegments?.length > 0 && returnSegments?.length > 0) {
-              const outboundOrigin = outboundSegments[0]?.departureAirport;
-              const outboundDestination = outboundSegments[outboundSegments.length - 1]?.arrivalAirport;
-              const returnOrigin = returnSegments[0]?.departureAirport;
-              const returnDestination = returnSegments[returnSegments.length - 1]?.arrivalAirport;
+          // Prepare flightData exactly as flight_pricecheck will use it
+          const flightData = {
+            ...parsedRequest.flightData,
+            source: source
+          };
 
-              if (returnOrigin !== outboundDestination || returnDestination !== outboundOrigin) {
-                // Open-jaw trip detected
-                result = {
-                  message: `Sorry, Navifare currently only supports round-trip flights with the same origin and destination. Open-jaw routes are not supported. Your itinerary goes from ${outboundOrigin} to ${outboundDestination}, but returns from ${returnOrigin} to ${returnDestination}. For a valid round-trip, the return flight must depart from ${outboundDestination} and arrive at ${outboundOrigin}.`,
-                  needsMoreInfo: false,
-                  error: 'OPEN_JAW_NOT_SUPPORTED',
-                  readyForPriceCheck: false
-                };
-              } else {
-                // Valid round-trip, proceed
-                // Determine source based on whether the request contains extracted data indicators
-                const source = (args.user_request.includes('extracted') || args.user_request.includes('{"tripType"') || args.user_request.includes('outboundSegments'))
-                  ? 'IMAGE_EXTRACTION'
-                  : 'MCP';
+          console.log('📤 Formatted flightData for flight_pricecheck:', JSON.stringify(flightData, null, 2));
 
-                // Prepare flightData exactly as flight_pricecheck will use it
-                const flightData = {
-                  ...parsedRequest.flightData,
-                  source: source
-                };
-
-                console.log('📤 Formatted flightData for flight_pricecheck:', JSON.stringify(flightData, null, 2));
-
-                result = {
-                  message: 'Flight details parsed and formatted successfully! Use the flightData below to call flight_pricecheck.',
-                  flightData: flightData,
-                  readyForPriceCheck: true
-                };
-              }
-            } else {
-              // Missing segments data
-              result = {
-                message: 'Invalid trip data: missing segment information.',
-                needsMoreInfo: true,
-                missingFields: ['segments']
-              };
-            }
-          } else {
-            // No legs or invalid legs length
-            result = {
-              message: 'Invalid trip data: expected at least 2 legs for a round-trip.',
-              needsMoreInfo: true,
-              missingFields: ['trip.legs']
-            };
-          }
+          result = {
+            message: 'Flight details parsed and formatted successfully! Use the flightData below to call flight_pricecheck.',
+            flightData: flightData,
+            readyForPriceCheck: true
+          };
         }
       } else if (name === 'flight_pricecheck') {
         console.log('🔍 Processing flight_pricecheck tool...');
@@ -2701,46 +2688,19 @@ app.post('/mcp', async (req, res) => {
 
         console.log('📤 Search flights payload:', JSON.stringify(searchData, null, 2));
 
-        // Validate trip type (round-trip only, no one-way or open-jaw)
-        const legs = searchData?.trip?.legs;
-        if (!legs || !Array.isArray(legs)) {
-          throw new Error('Invalid trip data: missing legs array');
-        } else if (legs.length === 1) {
-          throw new Error('Sorry, Navifare currently only supports round-trip flights. One-way flight price checking is not available yet.');
-        } else if (legs.length >= 2) {
-          // Check for open-jaw trips
-          const outboundSegments = legs[0]?.segments;
-          const returnSegments = legs[legs.length - 1]?.segments;
-
-          if (outboundSegments?.length > 0 && returnSegments?.length > 0) {
-            const outboundOrigin = outboundSegments[0]?.departureAirport;
-            const outboundDestination = outboundSegments[outboundSegments.length - 1]?.arrivalAirport;
-            const returnOrigin = returnSegments[0]?.departureAirport;
-            const returnDestination = returnSegments[returnSegments.length - 1]?.arrivalAirport;
-
-            if (returnOrigin !== outboundDestination || returnDestination !== outboundOrigin) {
-              throw new Error(
-                `Sorry, Navifare currently only supports round-trip flights with the same origin and destination. Open-jaw routes are not supported. ` +
-                `Your itinerary goes from ${outboundOrigin} to ${outboundDestination}, but returns from ${returnOrigin} to ${returnDestination}. ` +
-                `For a valid round-trip, the return flight must depart from ${outboundDestination} and arrive at ${outboundOrigin}.`
-              );
-            }
-          }
-        }
-
         // If streaming is requested, use SSE
         if (wantsStreaming) {
           console.log('📡 Using SSE streaming mode');
 
-          // Set SSE headers per MCP spec
+          // Set SSE headers
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
           res.setHeader('Mcp-Session-Id', sessionId);
-          res.setHeader('MCP-Protocol-Version', '2025-06-18');
 
-          // Extract progressToken from request _meta if provided
-          const progressToken = params._meta?.progressToken;
+          // Send initial connection event
+          res.write(`: connected\n`);
+          res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
 
           try {
             // Transform to API format and sanitize the request
@@ -2750,31 +2710,28 @@ app.post('/mcp', async (req, res) => {
             console.log('📤 [SSE] API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
 
             // Define progress callback to stream results as they appear
-            let progressCount = 0;
             const onProgress = (progressResults) => {
               const resultCount = progressResults.totalResults || progressResults.results?.length || 0;
               const status = progressResults.status || 'IN_PROGRESS';
 
               console.log(`📤 Streaming ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`);
 
-              // Send progress notification via SSE using standard MCP notifications/progress method
-              // Only send if client provided a progressToken
-              if (progressToken) {
-                progressCount = resultCount;
-                const progressNotification = {
-                  jsonrpc: '2.0',
-                  method: 'notifications/progress',
-                  params: {
-                    progressToken: progressToken,
-                    progress: resultCount,
-                    total: 100, // Estimated total (unknown, so using 100 as placeholder)
-                    message: `Found ${resultCount} booking source${resultCount !== 1 ? 's' : ''} (status: ${status})`
+              // Send progress event via SSE
+              const progressEvent = {
+                jsonrpc: '2.0',
+                method: 'notifications/message',
+                params: {
+                  level: 'info',
+                  data: {
+                    message: `Flight search progress: Found ${resultCount} result${resultCount !== 1 ? 's' : ''} (status: ${status})`,
+                    results: progressResults,
+                    resultCount: resultCount,
+                    status: status
                   }
-                };
+                }
+              };
 
-                // MCP spec: send as default message event (no event: field)
-                res.write(`data: ${JSON.stringify(progressNotification)}\n\n`);
-              }
+              res.write(`event: progress\ndata: ${JSON.stringify(progressEvent)}\n\n`);
             };
 
             const searchResult = await submit_and_poll_session(sanitizedRequest, onProgress);
@@ -2807,23 +2764,11 @@ app.post('/mcp', async (req, res) => {
 
             const finalResult = {
               message: formattedMessage.trim(),
-              searchResult: {
-                ...searchResult,
-                // Include request currency so widget can display prices in correct currency
-                currency: sanitizedRequest.currency || 'USD',
-                requestCurrency: sanitizedRequest.currency || 'USD'
-              },
-              status: searchResult.status || 'COMPLETED',
-              // Include user's original price for savings comparison in widget
-              userOriginalPrice: searchData.price || null,
-              userOriginalCurrency: sanitizedRequest.currency || 'USD',
-              userRequestedCurrency: sanitizedRequest.currency || 'USD'
+              searchResult: searchResult,
+              status: searchResult.status || 'COMPLETED'
             };
 
-            // Send final JSON-RPC response in MCP-compliant format
-            // Per MCP spec: send as default message event (no custom event type)
-            // Best practice: provide both text (stringified JSON for backwards compat)
-            // and structuredContent (parsed JSON for modern clients like Claude Desktop)
+            // Send final result as SSE event
             const response = {
               jsonrpc: '2.0',
               id: req.body.id,
@@ -2833,13 +2778,11 @@ app.post('/mcp', async (req, res) => {
                     type: 'text',
                     text: JSON.stringify(finalResult, null, 2)
                   }
-                ],
-                structuredContent: finalResult
+                ]
               }
             };
 
-            // MCP spec: send final response as default message event, then close stream
-            res.write(`data: ${JSON.stringify(response)}\n\n`);
+            res.write(`event: complete\ndata: ${JSON.stringify(response)}\n\n`);
             res.end();
             return;
 
@@ -2854,8 +2797,7 @@ app.post('/mcp', async (req, res) => {
                 data: apiError.message
               }
             };
-            // MCP spec: send error as default message event
-            res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+            res.write(`event: error\ndata: ${JSON.stringify(errorResponse)}\n\n`);
             res.end();
             return;
           }
@@ -2868,10 +2810,8 @@ app.post('/mcp', async (req, res) => {
             const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
             console.log('📤 API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
 
-            // Set MCP-compliant headers for non-streaming JSON response
-            res.setHeader('Content-Type', 'application/json');
+            // Set session header even for non-streaming
             res.setHeader('Mcp-Session-Id', sessionId);
-            res.setHeader('MCP-Protocol-Version', '2025-06-18');
 
             // Define progress callback to stream results as they appear
             const onProgress = (progressResults) => {
@@ -2912,17 +2852,8 @@ app.post('/mcp', async (req, res) => {
 
             result = {
               message: formattedMessage.trim(),
-              searchResult: {
-                ...searchResult,
-                // Include request currency so widget can display prices in correct currency
-                currency: sanitizedRequest.currency || 'USD',
-                requestCurrency: sanitizedRequest.currency || 'USD'
-              },
-              status: searchResult.status || 'COMPLETED',
-              // Include user's original price for savings comparison in widget
-              userOriginalPrice: searchData.price || null,
-              userOriginalCurrency: sanitizedRequest.currency || 'USD',
-              userRequestedCurrency: sanitizedRequest.currency || 'USD'
+              searchResult: searchResult,
+              status: searchResult.status || 'COMPLETED'
             };
           } catch (apiError) {
             console.error('❌ API Error:', apiError);
@@ -2979,7 +2910,6 @@ app.post('/mcp', async (req, res) => {
                   text: `Flight search completed! Found ${structuredContent.totalResults} result(s).`
                 }
               ],
-              isError: false,
               structuredContent: structuredContent,
               _meta: {
                 'openai/outputTemplate': 'ui://widget/flight-results.html',
@@ -3001,7 +2931,6 @@ app.post('/mcp', async (req, res) => {
                   text: 'Session created successfully'
                 }
               ],
-              isError: false,
               structuredContent: {
                 request_id: submitResult.request_id,
                 status: submitResult.status || 'NEW',
@@ -3025,7 +2954,6 @@ app.post('/mcp', async (req, res) => {
                 text: `Flight search failed: ${apiError.message}`
               }
             ],
-            isError: true,
             structuredContent: {
               error: true,
               message: apiError.message
@@ -3058,37 +2986,20 @@ app.post('/mcp', async (req, res) => {
         // Set session header for non-streaming responses
         res.setHeader('Mcp-Session-Id', sessionId);
 
-        // Format response in MCP-compliant format
+        // Format response
         // If result already has structuredContent (ChatGPT format from search_flights/submit_session),
         // use it directly; otherwise wrap it in standard MCP format
-        let mcpResult;
-        if (result.structuredContent) {
-          // Result already has proper MCP format with content array
-          mcpResult = result;
-        } else {
-          // Wrap in MCP-compliant format with content array, structuredContent, and isError (only for errors)
-          // Per MCP spec best practice: provide both text (stringified JSON for backwards compat)
-          // and structuredContent (parsed JSON for modern clients like Claude Desktop)
-          mcpResult = {
+        const response = {
+          jsonrpc: '2.0',
+          id: req.body.id,
+          result: result.structuredContent ? result : {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify(result, null, 2)
               }
-            ],
-            structuredContent: result
-          };
-
-          // Only add isError field for actual errors (not for successful responses)
-          if (result.error || result.status === 'error') {
-            mcpResult.isError = true;
+            ]
           }
-        }
-
-        const response = {
-          jsonrpc: '2.0',
-          id: req.body.id,
-          result: mcpResult
         };
 
         // Debug: Log the response being sent
