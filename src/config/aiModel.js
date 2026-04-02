@@ -8,7 +8,7 @@
 /**
  * The primary AI model used for all Gemini API calls.
  */
-export const AI_MODEL = 'gemini-3-flash-preview'
+export const AI_MODEL = 'gemini-3.1-flash-lite-preview'
 
 /**
  * Default configuration for AI model requests.
