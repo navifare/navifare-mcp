@@ -2791,13 +2791,17 @@ app.post('/mcp', async (req, res) => {
             const errorResponse = {
               jsonrpc: '2.0',
               id: req.body.id,
-              error: {
-                code: -32603,
-                message: 'Internal error',
-                data: apiError.message
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: apiError.message
+                  }
+                ],
+                isError: true
               }
             };
-            res.write(`event: error\ndata: ${JSON.stringify(errorResponse)}\n\n`);
+            res.write(`event: complete\ndata: ${JSON.stringify(errorResponse)}\n\n`);
             res.end();
             return;
           }
@@ -2858,9 +2862,13 @@ app.post('/mcp', async (req, res) => {
           } catch (apiError) {
             console.error('❌ API Error:', apiError);
             result = {
-              message: `Flight search failed: ${apiError.message}`,
-              error: apiError.message,
-              searchData: searchData
+              content: [
+                {
+                  type: 'text',
+                  text: apiError.message
+                }
+              ],
+              isError: true
             };
           }
         }
@@ -2954,6 +2962,7 @@ app.post('/mcp', async (req, res) => {
                 text: `Flight search failed: ${apiError.message}`
               }
             ],
+            isError: true,
             structuredContent: {
               error: true,
               message: apiError.message
@@ -2992,7 +3001,7 @@ app.post('/mcp', async (req, res) => {
         const response = {
           jsonrpc: '2.0',
           id: req.body.id,
-          result: result.structuredContent ? result : {
+          result: (result.structuredContent || result.content) ? result : {
             content: [
               {
                 type: 'text',
