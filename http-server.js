@@ -2688,6 +2688,32 @@ app.post('/mcp', async (req, res) => {
 
         console.log('📤 Search flights payload:', JSON.stringify(searchData, null, 2));
 
+        // Validate and sanitize before entering SSE mode so errors return as plain JSON
+        let apiRequest, sanitizedRequest;
+        try {
+          apiRequest = transformToApiFormat(searchData);
+          console.log('📤 API Request after transformation:', JSON.stringify(apiRequest, null, 2));
+          sanitizedRequest = sanitizeSubmitArgs(apiRequest);
+          console.log('📤 API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
+        } catch (validationError) {
+          console.error('❌ Validation Error:', validationError);
+          res.setHeader('Mcp-Session-Id', sessionId);
+          res.json({
+            jsonrpc: '2.0',
+            id: req.body.id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: validationError.message
+                }
+              ],
+              isError: true
+            }
+          });
+          return;
+        }
+
         // If streaming is requested, use SSE
         if (wantsStreaming) {
           console.log('📡 Using SSE streaming mode');
@@ -2703,10 +2729,6 @@ app.post('/mcp', async (req, res) => {
           res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
 
           try {
-            // Transform to API format and sanitize the request
-            const apiRequest = transformToApiFormat(searchData);
-            console.log('📤 [SSE] API Request after transformation:', JSON.stringify(apiRequest, null, 2));
-            const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
             console.log('📤 [SSE] API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
 
             // Define progress callback to stream results as they appear
@@ -2808,12 +2830,6 @@ app.post('/mcp', async (req, res) => {
         } else {
           // Standard JSON response (non-streaming)
           try {
-            // Transform to API format and sanitize the request
-            const apiRequest = transformToApiFormat(searchData);
-            console.log('📤 API Request after transformation:', JSON.stringify(apiRequest, null, 2));
-            const sanitizedRequest = sanitizeSubmitArgs(apiRequest);
-            console.log('📤 API Request after sanitization:', JSON.stringify(sanitizedRequest, null, 2));
-
             // Set session header even for non-streaming
             res.setHeader('Mcp-Session-Id', sessionId);
 
